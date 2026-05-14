@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/gorilla/websocket"
 
@@ -30,23 +31,31 @@ type Server struct {
 	hasRecover   bool
 	closed       atomic.Bool
 	conns        atomic.Int64
-	upgrader     websocket.Upgrader
-	diag         Logger
+	// Tracking
+	connStats            sync.Map // clientID -> *ConnectionStats (last snapshot from GetConnectionStats)
+	clientsByID          sync.Map // clientID -> *internal.Client
+	totalMessages        atomic.Int64
+	totalConnectionsEver atomic.Int64
+	serverStart          time.Time
+	onHeartbeatTimeout   []func(*Context)
+	upgrader             websocket.Upgrader
+	diag                 Logger
 }
 
 // New constructs a Server with defaults applied from cfg.
 func New(cfg Config) *Server {
 	cfg = cfg.normalized()
 	diag := resolveLogger(cfg.Logger)
-	hub := internal.NewHub(diag)
+	hub := internal.NewHub(diag, cfg.HubEmitBufferSize)
 	hCtx, cancel := context.WithCancel(context.Background())
 	s := &Server{
-		cfg:       cfg,
-		hub:       hub,
-		hubCtx:    hCtx,
-		hubCancel: cancel,
-		handlers:  make(map[string]EventHandler),
-		diag:      diag,
+		cfg:         cfg,
+		hub:         hub,
+		hubCtx:      hCtx,
+		hubCancel:   cancel,
+		handlers:    make(map[string]EventHandler),
+		diag:        diag,
+		serverStart: time.Now(),
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  cfg.ReadBufferSize,
 			WriteBufferSize: cfg.WriteBufferSize,
@@ -113,6 +122,90 @@ func (s *Server) Handler() http.Handler {
 	return http.HandlerFunc(s.serveWS)
 }
 
+// GetConnectionStats returns diagnostic metrics for a specific connection.
+// Returns nil if the connection does not exist.
+func (s *Server) GetConnectionStats(clientID string) *ConnectionStats {
+	v, ok := s.clientsByID.Load(clientID)
+	if !ok {
+		return nil
+	}
+	ic := v.(*internal.Client)
+	st := s.buildConnectionStats(ic)
+	s.connStats.Store(clientID, st)
+	return st
+}
+
+// GetServerStats returns aggregate metrics for the server.
+func (s *Server) GetServerStats() *ServerStats {
+	return &ServerStats{
+		ActiveConnections:      s.conns.Load(),
+		TotalConnectionsEver:   s.totalConnectionsEver.Load(),
+		TotalMessagesProcessed: s.totalMessages.Load(),
+		UptimeSince:            s.serverStart,
+	}
+}
+
+// GetRoomStats returns metrics for a specific room.
+// Returns nil if the room does not exist.
+func (s *Server) GetRoomStats(roomID string) *RoomStats {
+	if roomID == "" {
+		return nil
+	}
+	clients := s.hub.RoomClients(roomID)
+	if len(clients) == 0 {
+		return nil
+	}
+	members := make([]string, len(clients))
+	for i, c := range clients {
+		members[i] = c.ID()
+	}
+	created := time.Now()
+	if t, ok := s.hub.RoomCreatedAt(roomID); ok {
+		created = t
+	}
+	return &RoomStats{
+		RoomID:      roomID,
+		MemberCount: len(clients),
+		CreatedAt:   created,
+		Members:     members,
+	}
+}
+
+// ListAllRooms returns a snapshot of all active rooms with member counts.
+func (s *Server) ListAllRooms() []*RoomStats {
+	rooms := s.hub.AllRooms()
+	stats := make([]*RoomStats, 0, len(rooms))
+	for _, roomID := range rooms {
+		if rs := s.GetRoomStats(roomID); rs != nil {
+			stats = append(stats, rs)
+		}
+	}
+	return stats
+}
+
+func (s *Server) buildConnectionStats(ic *internal.Client) *ConnectionStats {
+	st := ic.GetStats()
+	return &ConnectionStats{
+		ClientID:          ic.ID(),
+		BytesSent:         st.BytesSent,
+		BytesReceived:     st.BytesReceived,
+		MessagesSent:      st.MessagesSent,
+		MessagesReceived:  st.MessagesReceived,
+		BufferUtilization: st.BufferUtilization,
+		ConnectedAt:       st.ConnectedAt,
+		LastActivity:      st.LastActivity,
+		RoomCount:         s.hub.ClientRoomCount(ic),
+	}
+}
+
+// OnHeartbeatTimeout registers callbacks invoked when a client misses a heartbeat.
+// This typically means the connection is zombie (network dead but not yet detected).
+func (s *Server) OnHeartbeatTimeout(fn func(*Context)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onHeartbeatTimeout = append(s.onHeartbeatTimeout, fn)
+}
+
 // RoomSize returns the number of active connections in a room.
 // Returns 0 if the room does not exist or is empty.
 func (s *Server) RoomSize(roomID string) int {
@@ -145,15 +238,62 @@ func (s *Server) RoomIdentities(roomID string) []string {
 	return out
 }
 
-// Shutdown stops accepting new clients and waits for the hub to drain existing connections.
+// Shutdown gracefully closes the server and all connections.
+// It stops accepting new connections and waits up to ctx timeout for the hub to finish draining.
+// After timeout, the context error is returned even though cleanup may still be in progress.
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.closed.Store(true)
+
 	s.hubCancel()
 	done := make(chan struct{})
 	go func() {
 		s.hub.Wait()
 		close(done)
 	}()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-done:
+		return nil
+	}
+}
+
+// ShutdownWithMessage sends a notification to all clients before closing.
+func (s *Server) ShutdownWithMessage(ctx context.Context, eventName string, payload interface{}) error {
+	s.closed.Store(true)
+
+	msg := ServerWireMessage{Event: eventName, Payload: payload}
+	b, err := json.Marshal(msg)
+	if err != nil {
+		s.hubCancel()
+		done := make(chan struct{})
+		go func() {
+			s.hub.Wait()
+			close(done)
+		}()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-done:
+			return err
+		}
+	}
+	s.hub.Emit(internal.EmitJob{
+		AllClients: true,
+		Event:      internal.WireEvent(eventName),
+		Data:       b,
+	})
+
+	time.Sleep(500 * time.Millisecond)
+
+	s.hubCancel()
+	done := make(chan struct{})
+	go func() {
+		s.hub.Wait()
+		close(done)
+	}()
+
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -193,7 +333,12 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 	}
 	opt.OnDone = func() {
 		s.conns.Add(-1)
+		s.clientsByID.Delete(ic.ID())
+		s.connStats.Delete(ic.ID())
 		s.fireDisconnect(ic, r)
+	}
+	opt.OnHeartbeatTimeout = func() {
+		s.fireHeartbeatTimeout(ic, r)
 	}
 	ic = internal.NewClient(s.hub, conn, opt)
 
@@ -207,6 +352,9 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.clientsByID.Store(id, ic)
+	s.totalConnectionsEver.Add(1)
+
 	go ic.WritePump()
 	s.mu.RLock()
 	cbs := make([]func(*Context), len(s.onConnect))
@@ -218,6 +366,27 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	go ic.ReadPump()
+}
+
+func (s *Server) fireHeartbeatTimeout(ic *internal.Client, r *http.Request) {
+	ctx := s.newContext(ic, r, "", nil, "", "")
+	s.mu.RLock()
+	cbs := make([]func(*Context), len(s.onHeartbeatTimeout))
+	copy(cbs, s.onHeartbeatTimeout)
+	s.mu.RUnlock()
+	for _, fn := range cbs {
+		if fn == nil {
+			continue
+		}
+		func() {
+			defer func() {
+				if rec := recover(); rec != nil {
+					s.diag.Printf("gosocket: heartbeat timeout handler panic: %v", rec)
+				}
+			}()
+			fn(ctx)
+		}()
+	}
 }
 
 func (s *Server) fireDisconnect(ic *internal.Client, r *http.Request) {
@@ -262,6 +431,7 @@ func (s *Server) dispatch(ic *internal.Client, r *http.Request, raw []byte) {
 	if err := json.Unmarshal(raw, &msg); err != nil {
 		return
 	}
+	s.totalMessages.Add(1)
 	ctx := s.newContext(ic, r, msg.Event, msg.Payload, msg.Room, msg.ID)
 
 	exec := func() {

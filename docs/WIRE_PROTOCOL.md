@@ -62,3 +62,7 @@ Room membership is server-side only; the wire `room` field on client messages do
 ## Control frames
 
 Ping/pong and WebSocket close frames are handled by the library. On shutdown, the server attempts to send a **normal close** control frame so clients can observe graceful teardown.
+
+## Shutdown notice (v0.1.0)
+
+`Server.ShutdownWithMessage` delivers one **Server → client** JSON text frame (same JSON shape as above) to **every** connected client before the hub begins draining, then waits a short interval so slow peers can process it. The `event` name and `payload` are application-defined (for example a `server_restart` event with a small metadata object).

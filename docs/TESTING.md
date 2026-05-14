@@ -2,7 +2,9 @@
 
 ## Current state
 
-- `server_test.go`: `RoomSize` after join, close frame on teardown, `On` dispatch, `Recover` on panicking handler.
+- `server_test.go`: `RoomSize` after join, close frame on teardown, `On` dispatch, `Recover` on panicking handler, **`EmitToRoom`**, **Shutdown / dial after close**, connection **stats** (`GetConnectionStats`, `GetServerStats`), **heartbeat timeout** (`OnHeartbeatTimeout`), and related integration cases.
+- `stats_test.go`: zero defaults for `ConnectionStats`, `GetServerStats`, `GetRoomStats` / `ListAllRooms` empty cases (uses shared `newTestContext()` helper).
+- `config_test.go`: **`HubEmitBufferSize`** normalization (default, custom, negative → default).
 - `types_test.go`: wire message JSON, preset constants, `MiddlewareFunc`.
 - `internal/`: hub/client covered mostly **indirectly** via `Server` tests; add focused `internal` tests when the toolchain allows (see coverage below).
 
@@ -22,8 +24,15 @@ Achieving ~80% in a small library is realistic once the following are added:
 
 ## How to measure
 
+From the repo root, **`make print-coverage`** runs `go test` with `-coverprofile=coverage.out` and prints the total statement coverage line (see the **`Makefile`** for `make coverage`, `make coverage-html`, `make ci`, `make vulncheck`, `make errcheck`, and `make staticcheck`).
+
 ```bash
-cd lib/go-socket
+make print-coverage
+```
+
+Equivalent manual steps (from the repository root):
+
+```bash
 go test ./... -coverprofile=cover.out
 go tool cover -func=cover.out | tail -1
 ```
