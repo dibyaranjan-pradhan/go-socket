@@ -2,6 +2,8 @@
 
 JSON-over-WebSocket server for Go, built on [gorilla/websocket](https://github.com/gorilla/websocket). Used by **STAG** for real-time chat; usable by any service that wants named events, rooms, and middleware on a single upgrade path.
 
+**v0.1.0** adds generic observability hooks (per-connection and server stats), a tunable hub emit queue (`Config.HubEmitBufferSize`), heartbeat-timeout callbacks for zombie connections, and optional `ShutdownWithMessage` for graceful deploys. See below.
+
 ## When to use
 
 - You control the **Go server** and want **WebSocket** with **event names** (not a raw stream).
@@ -21,11 +23,12 @@ JSON-over-WebSocket server for Go, built on [gorilla/websocket](https://github.c
 
    ```go
    s := gosocket.New(gosocket.Config{
-       Logger:         myLogger, // anything with Printf(format string, v ...interface{})
-       MaxMessageSize: 512 * 1024,
-       PingInterval:   30 * time.Second,
-       PongWait:       60 * time.Second,
-       WriteWait:      10 * time.Second,
+       Logger:              myLogger, // anything with Printf(format string, v ...interface{})
+       MaxMessageSize:      512 * 1024,
+       PingInterval:        30 * time.Second,
+       PongWait:            60 * time.Second,
+       WriteWait:           10 * time.Second,
+       HubEmitBufferSize:   2048, // optional: hub fan-out queue; default 256, raise for heavy broadcast
    })
    s.Use(s.LoggerMiddleware())
    s.Use(gosocket.Recover())
@@ -50,6 +53,29 @@ JSON-over-WebSocket server for Go, built on [gorilla/websocket](https://github.c
    _ = s.Shutdown(ctx)
    ```
 
+   For zero-downtime style rollouts you can warn clients before the hub drains:
+
+   ```go
+   _ = s.ShutdownWithMessage(ctx, "server_restart", map[string]string{"reason": "deploy"})
+   ```
+
+6. **Observability (v0.1.0)** — metrics without wiring every app:
+
+   ```go
+   agg := s.GetServerStats() // aggregate: active sockets, lifetime connects, messages processed, uptime
+   cs := s.GetConnectionStats(clientID) // per socket: bytes, message counts, buffer fill, rooms, last activity
+   rs := s.GetRoomStats(roomID)         // members + room creation time
+   all := s.ListAllRooms()             // snapshot of every room
+   ```
+
+7. **Heartbeat timeouts** — after several read deadlines without a responding pong (slow or zombie peer), registered handlers run:
+
+   ```go
+   s.OnHeartbeatTimeout(func(ctx *gosocket.Context) {
+       // log, metrics, or ctx.Disconnect()
+   })
+   ```
+
 ## Repository layout
 
 | Path | Role |
@@ -57,6 +83,7 @@ JSON-over-WebSocket server for Go, built on [gorilla/websocket](https://github.c
 | Root `.go` files | Public API: `Server`, `Context`, `Config`, middleware, optional `Preset*` event constants |
 | `internal/` | Hub, client pumps — **do not import** from apps |
 | `docs/` | Wire format, middleware, **events reference**, testing/coverage plan |
+| `Makefile` | **fmt, vet, test, race, coverage %, govulncheck, errcheck, staticcheck** (`make help`) |
 
 ## Documentation index
 

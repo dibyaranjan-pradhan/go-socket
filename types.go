@@ -8,13 +8,11 @@ import (
 	"time"
 )
 
-// EventConnect is the synthetic event name used when running middleware for a new connection.
-const EventConnect = "$connect"
-
-// EventDisconnect is the synthetic event name passed to OnDisconnect handlers.
-const EventDisconnect = "$disconnect"
-
 const (
+	// EventConnect is the synthetic event name used when running middleware for a new connection.
+	EventConnect = "$connect"
+	// EventDisconnect is the synthetic event name passed to OnDisconnect handlers.
+	EventDisconnect = "$disconnect"
 	// DefaultMaxConnections is the default upper bound on concurrent sockets.
 	DefaultMaxConnections = 10000
 	// DefaultWriteBufferSize is the default per-client outbound queue depth.
@@ -29,16 +27,18 @@ const (
 	DefaultPongWait = 60 * time.Second
 	// DefaultWriteWait is the default write deadline for websocket writes.
 	DefaultWriteWait = 10 * time.Second
+	// DefaultHubEmitBufferSize is the default capacity of the hub outbound emit job queue.
+	DefaultHubEmitBufferSize = 256
 )
 
-// ErrRejected indicates middleware rejected a connection or event.
-var ErrRejected = errors.New("gosocket: rejected by middleware")
-
-// ErrServerClosed is returned when the server has shut down.
-var ErrServerClosed = errors.New("gosocket: server closed")
-
-// ErrConnectionLimit is returned when MaxConnections is reached.
-var ErrConnectionLimit = errors.New("gosocket: connection limit reached")
+var (
+	// ErrRejected indicates middleware rejected a connection or event.
+	ErrRejected = errors.New("gosocket: rejected by middleware")
+	// ErrServerClosed is returned when the server has shut down.
+	ErrServerClosed = errors.New("gosocket: server closed")
+	// ErrConnectionLimit is returned when MaxConnections is reached.
+	ErrConnectionLimit = errors.New("gosocket: connection limit reached")
+)
 
 // Config holds tunables for the WebSocket server and pumps.
 type Config struct {
@@ -60,6 +60,10 @@ type Config struct {
 	PongWait time.Duration
 	// WriteWait is the write deadline for control and data frames. Zero uses DefaultWriteWait.
 	WriteWait time.Duration
+	// HubEmitBufferSize is the capacity of the hub's outbound emit job queue.
+	// Increase this for broadcast-heavy workloads to prevent message drops.
+	// Default is 256; recommended minimum for high-throughput apps is 2048+.
+	HubEmitBufferSize int
 	// CheckOrigin is passed to websocket.Upgrader. If nil, all origins are allowed.
 	CheckOrigin func(r *http.Request) bool
 	// Logger receives diagnostic lines. If nil, the standard library log package is used.
@@ -88,6 +92,9 @@ func (c *Config) normalized() Config {
 	}
 	if out.WriteWait <= 0 {
 		out.WriteWait = DefaultWriteWait
+	}
+	if out.HubEmitBufferSize <= 0 {
+		out.HubEmitBufferSize = DefaultHubEmitBufferSize
 	}
 	return out
 }

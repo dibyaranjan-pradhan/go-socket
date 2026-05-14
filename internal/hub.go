@@ -4,6 +4,7 @@ package internal
 import (
 	"context"
 	"sync"
+	"time"
 )
 
 // PrintfLogger is an optional sink for hub warnings (same shape as gosocket.Logger).
@@ -17,6 +18,8 @@ type Hub struct {
 
 	clients map[*Client]struct{}
 	rooms   map[string]map[*Client]struct{}
+	// roomCreated records when each room first received a member.
+	roomCreated map[string]time.Time
 
 	register   chan *Client
 	unregister chan *Client
@@ -48,22 +51,29 @@ type EmitJob struct {
 	Exclude *Client
 	// Only targets a single client when non-nil (room is ignored).
 	Only *Client
+	// AllClients delivers Data to every registered client (Room is ignored).
+	AllClients bool
 	// Data is the fully serialized wire frame.
 	Data []byte
 }
 
-// NewHub constructs a hub. Call Run in a dedicated goroutine. log may be nil.
-func NewHub(log PrintfLogger) *Hub {
+// NewHub constructs a hub with configurable emit buffer size.
+// Call Run in a dedicated goroutine. log may be nil.
+func NewHub(log PrintfLogger, emitBufferSize int) *Hub {
+	if emitBufferSize <= 0 {
+		emitBufferSize = 256
+	}
 	return &Hub{
-		clients:    make(map[*Client]struct{}),
-		rooms:      make(map[string]map[*Client]struct{}),
-		register:   make(chan *Client),
-		unregister: make(chan *Client),
-		join:       make(chan roomJoin),
-		leave:      make(chan roomLeave),
-		emit:       make(chan EmitJob, 256),
-		closed:     make(chan struct{}),
-		log:        log,
+		clients:     make(map[*Client]struct{}),
+		rooms:       make(map[string]map[*Client]struct{}),
+		roomCreated: make(map[string]time.Time),
+		register:    make(chan *Client),
+		unregister:  make(chan *Client),
+		join:        make(chan roomJoin),
+		leave:       make(chan roomLeave),
+		emit:        make(chan EmitJob, emitBufferSize),
+		closed:      make(chan struct{}),
+		log:         log,
 	}
 }
 
@@ -103,6 +113,7 @@ func (h *Hub) joinRoom(j roomJoin) {
 	if m == nil {
 		m = make(map[*Client]struct{})
 		h.rooms[j.room] = m
+		h.roomCreated[j.room] = time.Now()
 	}
 	m[j.c] = struct{}{}
 }
@@ -114,6 +125,7 @@ func (h *Hub) leaveRoom(j roomLeave) {
 		delete(m, j.c)
 		if len(m) == 0 {
 			delete(h.rooms, j.room)
+			delete(h.roomCreated, j.room)
 		}
 	}
 }
@@ -139,6 +151,17 @@ func (h *Hub) logEmitQueueFull(e EmitJob, c *Client) {
 func (h *Hub) collectTargets(e EmitJob) []*Client {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
+
+	if e.AllClients {
+		out := make([]*Client, 0, len(h.clients))
+		for c := range h.clients {
+			if e.Exclude != nil && c == e.Exclude {
+				continue
+			}
+			out = append(out, c)
+		}
+		return out
+	}
 
 	if e.Only != nil {
 		if _, ok := h.clients[e.Only]; ok {
@@ -170,6 +193,7 @@ func (h *Hub) removeClientMaps(c *Client) {
 		delete(m, c)
 		if len(m) == 0 {
 			delete(h.rooms, room)
+			delete(h.roomCreated, room)
 		}
 	}
 }
@@ -182,6 +206,7 @@ func (h *Hub) drainAndCloseAll() {
 	}
 	h.clients = make(map[*Client]struct{})
 	h.rooms = make(map[string]map[*Client]struct{})
+	h.roomCreated = make(map[string]time.Time)
 	h.mu.Unlock()
 
 	for _, c := range clients {
@@ -275,4 +300,39 @@ func (h *Hub) RoomClients(room string) []*Client {
 		out = append(out, c)
 	}
 	return out
+}
+
+// AllRooms returns a list of all active room IDs.
+func (h *Hub) AllRooms() []string {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	rooms := make([]string, 0, len(h.rooms))
+	for room := range h.rooms {
+		rooms = append(rooms, room)
+	}
+	return rooms
+}
+
+// ClientRoomCount returns how many rooms the client is currently joined to.
+func (h *Hub) ClientRoomCount(c *Client) int {
+	if c == nil {
+		return 0
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	n := 0
+	for _, m := range h.rooms {
+		if _, ok := m[c]; ok {
+			n++
+		}
+	}
+	return n
+}
+
+// RoomCreatedAt returns the time the room was first created, if known.
+func (h *Hub) RoomCreatedAt(room string) (time.Time, bool) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	t, ok := h.roomCreated[room]
+	return t, ok
 }

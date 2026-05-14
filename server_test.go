@@ -226,3 +226,125 @@ func TestRecoverCatchesEventPanic(t *testing.T) {
 	}
 	t.Fatal("expected connection to close after panicking handler")
 }
+
+func TestGetConnectionStatsAfterConnect(t *testing.T) {
+	s := New(Config{})
+	defer func() { _ = s.Shutdown(newTestContext()) }()
+	var clientID string
+	s.OnConnect(func(ctx *Context) {
+		clientID = ctx.ClientID()
+	})
+
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts.URL), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if clientID != "" {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if clientID == "" {
+		t.Fatal("expected client ID from OnConnect")
+	}
+
+	st := s.GetConnectionStats(clientID)
+	if st == nil {
+		t.Fatalf("stats should not be nil for connected client")
+	}
+	if st.ClientID != clientID {
+		t.Fatalf("ClientID = %q, want %q", st.ClientID, clientID)
+	}
+	if st.MessagesReceived != 0 {
+		t.Fatalf("MessagesReceived = %d before any inbound events", st.MessagesReceived)
+	}
+
+	_ = conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
+	if err := conn.WriteMessage(websocket.TextMessage, []byte(`{"event":"ping","payload":{}}`)); err != nil {
+		t.Fatal(err)
+	}
+
+	for time.Now().Before(deadline) {
+		st = s.GetConnectionStats(clientID)
+		if st != nil && st.MessagesReceived >= 1 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("expected MessagesReceived to increment after inbound message")
+}
+
+func TestHeartbeatTimeoutCallback(t *testing.T) {
+	srv := New(Config{})
+	defer func() { _ = srv.Shutdown(newTestContext()) }()
+
+	called := false
+	srv.OnHeartbeatTimeout(func(ctx *Context) {
+		called = true
+	})
+
+	if called {
+		t.Errorf("callback should not be called immediately")
+	}
+}
+
+func TestHeartbeatTimeoutFires(t *testing.T) {
+	var sawClient string
+	s := New(Config{
+		PingInterval: 20 * time.Millisecond,
+		PongWait:     40 * time.Millisecond,
+	})
+	defer func() { _ = s.Shutdown(newTestContext()) }()
+	s.OnHeartbeatTimeout(func(ctx *Context) {
+		sawClient = ctx.ClientID()
+	})
+
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts.URL), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	// Never read: peer does not complete ping/pong cycle toward our server's read deadlines.
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if sawClient != "" {
+			return
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+	t.Fatal("expected OnHeartbeatTimeout to fire for unread peer")
+}
+
+func TestGetServerStatsTotalConnections(t *testing.T) {
+	s := New(Config{})
+	defer func() { _ = s.Shutdown(newTestContext()) }()
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts.URL), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		st := s.GetServerStats()
+		if st != nil && st.TotalConnectionsEver >= 1 && st.ActiveConnections >= 1 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("expected TotalConnectionsEver and ActiveConnections after dial")
+}
