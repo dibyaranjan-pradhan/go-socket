@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Dibyaranjan Pradhan. All rights reserved.
+
 package internal
 
 import (
@@ -7,20 +9,19 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/gorilla/websocket"
 )
 
 // ErrRateLimited is returned when a message arrives faster than the configured limit.
 var ErrRateLimited = errors.New("gosocket: rate limited")
 
-// Client represents one WebSocket connection and its outbound queue.
+// Client represents one peer connection and its outbound queue. The underlying
+// socket is reached only through the Transport interface.
 type Client struct {
 	hub *Hub
 
-	id   string
-	conn *websocket.Conn
-	send chan []byte
+	id        string
+	transport Transport
+	send      chan []byte
 
 	maxMessageSize int64
 	writeWait      time.Duration
@@ -69,8 +70,8 @@ type ClientOptions struct {
 	OnHeartbeatTimeout func()
 }
 
-// NewClient wires pumps configuration for a peer connection.
-func NewClient(hub *Hub, conn *websocket.Conn, opt ClientOptions) *Client {
+// NewClient wires pumps configuration for a peer connection over the transport.
+func NewClient(hub *Hub, transport Transport, opt ClientOptions) *Client {
 	if opt.SendBuffer <= 0 {
 		opt.SendBuffer = 256
 	}
@@ -78,7 +79,7 @@ func NewClient(hub *Hub, conn *websocket.Conn, opt ClientOptions) *Client {
 	c := &Client{
 		hub:                hub,
 		id:                 opt.ID,
-		conn:               conn,
+		transport:          transport,
 		send:               make(chan []byte, opt.SendBuffer),
 		maxMessageSize:     opt.MaxMessageSize,
 		writeWait:          opt.WriteWait,
@@ -141,7 +142,7 @@ func (c *Client) TrySend(data []byte) (ok bool) {
 // Shutdown closes the socket and outbound channel exactly once.
 func (c *Client) Shutdown() {
 	c.shutdownOnce.Do(func() {
-		_ = c.conn.Close()
+		_ = c.transport.Close()
 		close(c.send)
 	})
 }
@@ -205,16 +206,15 @@ func (c *Client) ReadPump() {
 		}
 	}()
 
-	c.conn.SetReadLimit(c.maxMessageSize)
-	_ = c.conn.SetReadDeadline(time.Now().Add(c.pongWait))
-	c.conn.SetPongHandler(func(string) error {
-		_ = c.conn.SetReadDeadline(time.Now().Add(c.pongWait))
+	c.transport.SetReadLimit(c.maxMessageSize)
+	_ = c.transport.SetReadDeadline(time.Now().Add(c.pongWait))
+	c.transport.OnPong(func() {
+		_ = c.transport.SetReadDeadline(time.Now().Add(c.pongWait))
 		c.missedPongs.Store(0)
-		return nil
 	})
 
 	for {
-		_, message, err := c.conn.ReadMessage()
+		message, err := c.transport.Read()
 		if err != nil {
 			var netErr net.Error
 			if (errors.As(err, &netErr) && netErr.Timeout()) || errors.Is(err, os.ErrDeadlineExceeded) {
@@ -224,12 +224,12 @@ func (c *Client) ReadPump() {
 					}
 					return
 				}
-				_ = c.conn.SetReadDeadline(time.Now().Add(c.pongWait))
+				_ = c.transport.SetReadDeadline(time.Now().Add(c.pongWait))
 				continue
 			}
 			return
 		}
-		_ = c.conn.SetReadDeadline(time.Now().Add(c.pongWait))
+		_ = c.transport.SetReadDeadline(time.Now().Add(c.pongWait))
 		c.recordBytesReceived(int64(len(message)))
 		c.recordMessageReceived()
 		if c.onMessage != nil {
@@ -251,15 +251,15 @@ func (c *Client) WritePump() {
 			if !ok {
 				return
 			}
-			_ = c.conn.SetWriteDeadline(time.Now().Add(c.writeWait))
-			if err := c.conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+			_ = c.transport.SetWriteDeadline(time.Now().Add(c.writeWait))
+			if err := c.transport.Write(msg); err != nil {
 				return
 			}
 			c.recordBytesSent(int64(len(msg)))
 			c.recordMessageSent()
 		case <-ticker.C:
-			_ = c.conn.SetWriteDeadline(time.Now().Add(c.writeWait))
-			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+			_ = c.transport.SetWriteDeadline(time.Now().Add(c.writeWait))
+			if err := c.transport.Ping(); err != nil {
 				return
 			}
 		}
@@ -268,6 +268,6 @@ func (c *Client) WritePump() {
 
 // writeCloseFrame sends a normal close control frame; errors are ignored (conn may already be closed).
 func (c *Client) writeCloseFrame() {
-	_ = c.conn.SetWriteDeadline(time.Now().Add(c.writeWait))
-	_ = c.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+	_ = c.transport.SetWriteDeadline(time.Now().Add(c.writeWait))
+	_ = c.transport.SendClose()
 }

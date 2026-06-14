@@ -10,6 +10,7 @@ This folder holds deeper references and planning:
 | [MIDDLEWARE.md](./MIDDLEWARE.md) | Recover, rate limit, custom `MiddlewareFunc` |
 | [EVENTS.md](./EVENTS.md) | All synthetic + STAG chat events; optional `Preset*` constants |
 | [TESTING.md](./TESTING.md) | Unit-test plan and coverage target (~80%) |
+| [ARCHITECTURE.md](./ARCHITECTURE.md) | Internals: layers, packet codecs, the `Transport` seam (for contributors) |
 
 **v0.1.0 (library):** tunable **`HubEmitBufferSize`** on `Config`; **`ConnectionStats` / `ServerStats` / `RoomStats`** and server query helpers; **`OnHeartbeatTimeout`**; **`ShutdownWithMessage`**. Details and examples are in the root [**README.md**](../README.md).
 
