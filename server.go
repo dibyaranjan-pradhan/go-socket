@@ -10,8 +10,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/gorilla/websocket"
-
 	"github.com/dibyaranjan-pradhan/go-socket/internal"
 )
 
@@ -38,7 +36,7 @@ type Server struct {
 	totalConnectionsEver atomic.Int64
 	serverStart          time.Time
 	onHeartbeatTimeout   []func(*Context)
-	upgrader             websocket.Upgrader
+	upgrader             *internal.WSUpgrader
 	diag                 Logger
 }
 
@@ -56,14 +54,7 @@ func New(cfg Config) *Server {
 		handlers:    make(map[string]EventHandler),
 		diag:        diag,
 		serverStart: time.Now(),
-		upgrader: websocket.Upgrader{
-			ReadBufferSize:  cfg.ReadBufferSize,
-			WriteBufferSize: cfg.WriteBufferSize,
-			CheckOrigin:     cfg.CheckOrigin,
-		},
-	}
-	if s.upgrader.CheckOrigin == nil {
-		s.upgrader.CheckOrigin = func(r *http.Request) bool { return true }
+		upgrader:    internal.NewWSUpgrader(cfg.ReadBufferSize, cfg.WriteBufferSize, cfg.CheckOrigin),
 	}
 	go hub.Run(hCtx)
 	return s
@@ -312,7 +303,7 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	conn, err := s.upgrader.Upgrade(w, r, nil)
+	transport, err := s.upgrader.Upgrade(w, r)
 	if err != nil {
 		return
 	}
@@ -340,7 +331,7 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 	opt.OnHeartbeatTimeout = func() {
 		s.fireHeartbeatTimeout(ic, r)
 	}
-	ic = internal.NewClient(s.hub, conn, opt)
+	ic = internal.NewClient(s.hub, transport, opt)
 
 	s.hub.Register(ic)
 
