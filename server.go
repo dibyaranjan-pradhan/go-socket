@@ -37,6 +37,7 @@ type Server struct {
 	serverStart          time.Time
 	onHeartbeatTimeout   []func(*Context)
 	upgrader             *internal.WSUpgrader
+	pollHandler          *internal.PollHandler
 	diag                 Logger
 }
 
@@ -56,6 +57,13 @@ func New(cfg Config) *Server {
 		serverStart: time.Now(),
 		upgrader:    internal.NewWSUpgrader(cfg.ReadBufferSize, cfg.WriteBufferSize, cfg.CheckOrigin),
 	}
+	s.pollHandler = internal.NewPollHandler(
+		cfg.PingInterval,
+		cfg.PongWait,
+		cfg.MaxMessageSize,
+		s.attachPollTransport,
+		func() bool { return s.closed.Load() },
+	)
 	go hub.Run(hCtx)
 	return s
 }
@@ -111,6 +119,13 @@ func (s *Server) OnDisconnect(fn func(*Context)) {
 // Handler returns an http.Handler that upgrades connections to WebSocket.
 func (s *Server) Handler() http.Handler {
 	return http.HandlerFunc(s.serveWS)
+}
+
+// EngineIOHandler returns an http.Handler for Engine.IO v4 HTTP long-polling.
+// Mount it on a path such as /engine.io/ alongside Handler(); existing
+// WebSocket clients are not affected.
+func (s *Server) EngineIOHandler() http.Handler {
+	return s.pollHandler
 }
 
 // GetConnectionStats returns diagnostic metrics for a specific connection.
@@ -307,7 +322,22 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
+	s.serveTransport(transport, r)
+}
 
+func (s *Server) attachPollTransport(transport internal.Transport, r *http.Request) {
+	if s.closed.Load() {
+		_ = transport.Close()
+		return
+	}
+	if int(s.conns.Load()) >= s.cfg.MaxConnections {
+		_ = transport.Close()
+		return
+	}
+	s.serveTransport(transport, r)
+}
+
+func (s *Server) serveTransport(transport internal.Transport, r *http.Request) {
 	s.conns.Add(1)
 	id := randomClientID()
 	var ic *internal.Client

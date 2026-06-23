@@ -25,7 +25,7 @@ func TestServerStatsInitialization(t *testing.T) {
 
 	stats := srv.GetServerStats()
 	if stats == nil {
-		t.Errorf("GetServerStats should not return nil")
+		t.Fatal("GetServerStats should not return nil")
 	}
 	if stats.ActiveConnections != 0 {
 		t.Errorf("expected 0 active connections, got %d", stats.ActiveConnections)

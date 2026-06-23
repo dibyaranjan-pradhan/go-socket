@@ -61,6 +61,6 @@ For extra confidence before a release, also run with the race detector (slower):
 go test ./... -race -count=1
 ```
 
-## Manual smoke (STAG)
+## Manual smoke
 
-After library changes: connect chat WS, `fetch_history`, `message`, disconnect; confirm close frame and no hub panic on disconnect handler failure.
+After library changes: connect a WebSocket client, send a few registered events (e.g. `fetch_history`, `message`), disconnect; confirm close frame and no hub panic on disconnect handler failure.

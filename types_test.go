@@ -34,7 +34,7 @@ func TestServerWireMessageJSON(t *testing.T) {
 	}
 }
 
-func TestPresetConstantsMatchSTAGChat(t *testing.T) {
+func TestPresetConstantsStable(t *testing.T) {
 	if PresetChatFetchHistory != "fetch_history" ||
 		PresetChatMessage != "message" ||
 		PresetChatTyping != "typing" ||

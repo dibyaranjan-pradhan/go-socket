@@ -5,9 +5,10 @@ package gosocket
 //
 // Library-reserved synthetic events (not in this list) are EventConnect and EventDisconnect ("$connect", "$disconnect").
 //
-// STAG chat uses the PresetChat* names below on the wire; other backends may define their own events.
+// PresetChat* are optional wire event names for chat-style apps that want shared
+// constants instead of string literals. Other backends may define their own events.
 const (
-	// PresetChatFetchHistory is a common client→server name for paginated history (e.g. STAG chat).
+	// PresetChatFetchHistory is a common client→server name for paginated history.
 	PresetChatFetchHistory = "fetch_history"
 	// PresetChatMessage is a common bidirectional name for chat payloads.
 	PresetChatMessage = "message"
