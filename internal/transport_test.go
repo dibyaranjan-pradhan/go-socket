@@ -5,10 +5,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 // Compile-time checks: both the real and the fake transport satisfy Transport.
@@ -63,6 +66,49 @@ func (f *fakeTransport) Close() error     { f.closed.Store(true); return nil }
 
 // TestNewWSUpgraderDefaultsToOpenOrigin shows that a nil CheckOrigin accepts
 // every origin, while a custom one is honored.
+func TestWSTransportUpgradeReadWrite(t *testing.T) {
+	up := NewWSUpgrader(1024, 1024, nil)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tr, err := up.Upgrade(w, r)
+		if err != nil {
+			return
+		}
+		defer tr.Close()
+		if tr.Name() != "websocket" {
+			t.Errorf("name = %q", tr.Name())
+		}
+		tr.SetReadLimit(1 << 20)
+		_ = tr.SetReadDeadline(time.Now().Add(time.Second))
+		_ = tr.SetWriteDeadline(time.Now().Add(time.Second))
+		tr.OnPong(func() {})
+		msg, err := tr.Read()
+		if err != nil {
+			return
+		}
+		_ = tr.Write(append([]byte("echo:"), msg...))
+		_ = tr.Ping()
+		_ = tr.SendClose()
+	}))
+	defer ts.Close()
+
+	dialURL := "ws" + strings.TrimPrefix(ts.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(dialURL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if err := conn.WriteMessage(websocket.TextMessage, []byte("hi")); err != nil {
+		t.Fatal(err)
+	}
+	_, reply, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(reply) != "echo:hi" {
+		t.Fatalf("reply = %q", reply)
+	}
+}
+
 func TestNewWSUpgraderDefaultsToOpenOrigin(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 
@@ -84,7 +130,7 @@ func TestClientWritePumpWritesThroughTransport(t *testing.T) {
 	c := NewClient(NewHub(nil, 0), ft, ClientOptions{
 		ID:         "c1",
 		WriteWait:  time.Second,
-		PingPeriod: time.Hour, // far enough away that no ping fires during the test
+		PingPeriod: time.Hour,
 	})
 	go c.WritePump()
 	defer c.Shutdown()
@@ -108,8 +154,52 @@ func TestClientWritePumpWritesThroughTransport(t *testing.T) {
 	}
 }
 
+func TestClientReadPumpHeartbeatTimeout(t *testing.T) {
+	hub := NewHub(nil, 0)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go hub.Run(ctx)
+
+	pt := newPollingTransport(testSession())
+	defer pt.Close()
+
+	timeoutCalled := false
+	c := NewClient(hub, pt, ClientOptions{
+		ID:                 "hb",
+		PongWait:           5 * time.Millisecond,
+		OnHeartbeatTimeout: func() { timeoutCalled = true },
+	})
+	hub.Register(c)
+	go c.ReadPump()
+
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if timeoutCalled {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("OnHeartbeatTimeout not called")
+}
+
 // TestClientReadPumpDeliversThroughTransport shows the inbound path: a frame
 // from the transport reaches OnMessage and bumps receive stats.
+func TestClientTrySendAfterShutdown(t *testing.T) {
+	c := NewClient(nil, newFakeTransport(), ClientOptions{ID: "c", SendBuffer: 2})
+	c.Shutdown()
+	if c.TrySend([]byte("x")) {
+		t.Fatal("TrySend should fail after shutdown")
+	}
+}
+
+func TestClientWritePumpCloseFrame(t *testing.T) {
+	ft := newFakeTransport()
+	c := NewClient(nil, ft, ClientOptions{ID: "c", SendBuffer: 2, WriteWait: time.Second, PingPeriod: time.Hour})
+	go c.WritePump()
+	c.Shutdown()
+	time.Sleep(20 * time.Millisecond)
+}
+
 func TestClientReadPumpDeliversThroughTransport(t *testing.T) {
 	hub := NewHub(nil, 0)
 	ctx, cancel := context.WithCancel(context.Background())

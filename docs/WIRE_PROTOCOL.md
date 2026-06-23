@@ -1,6 +1,6 @@
 # Wire protocol
 
-See also **[EVENTS.md](./EVENTS.md)** for named events (library synthetic + STAG chat + optional `Preset*` constants).
+See also **[EVENTS.md](./EVENTS.md)** for named events (library synthetic events and optional `Preset*` constants).
 
 All application payloads are JSON text frames (UTF-8).
 

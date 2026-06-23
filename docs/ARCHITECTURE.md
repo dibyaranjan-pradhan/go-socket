@@ -4,9 +4,9 @@ This page explains how go-socket is put together inside. It is for people who
 work **on** the library. If you only want to **use** it, the root
 [README](../README.md) is enough.
 
-> Status: the pieces below are **foundation work** (roadmap Month 1). They are
-> wired in gradually. Today the public behaviour and the wire format are
-> unchanged — these internals do not yet alter how clients talk to the server.
+> Status: **M2 (v0.3.0)** adds Engine.IO v4 HTTP long-polling via
+> `Server.EngineIOHandler()`. The existing WebSocket `Handler()` and JSON wire
+> are unchanged. Socket.IO packet framing on the wire is still foundation work.
 
 ## The layers
 
@@ -29,7 +29,8 @@ Transport (WebSocket today)              ← the actual byte pipe
 |---------|-----|
 | `internal/engineio` | The Engine.IO packet: a type (open, close, ping, pong, message, upgrade, noop) plus a payload, and the code to turn it into bytes and back. |
 | `internal/socketio` | The Socket.IO packet: a type (connect, event, ack, ...), a namespace, an optional ack id, and a JSON payload, plus its bytes-and-back code. |
-| `internal/transport.go` | The `Transport` interface — a plain contract for "read a message, write a message, ping, close". `wsTransport` is the one place that uses the third-party WebSocket package. |
+| `internal/transport.go` | The `Transport` interface — a plain contract for "read a message, write a message, ping, close". `wsTransport` is the WebSocket implementation; `pollingTransport` is the Engine.IO HTTP long-poll implementation. |
+| `internal/polling_http.go`, `internal/poll_manager.go` | HTTP routes for Engine.IO handshake, long-poll GET, and POST send; session registry keyed by `sid`. |
 | `internal/hub.go`, `internal/client.go` | The connection hub (rooms, fan-out) and the per-connection read/write loops. The client talks to the socket **only** through `Transport`. |
 
 ## Why the Transport seam matters
@@ -40,9 +41,9 @@ Transport (WebSocket today)              ← the actual byte pipe
 1. **One dependency, one place.** Only `wsTransport` imports the third-party
    WebSocket package. Everything else is standard library. This is what lets us
    later ship our own WebSocket code and drop the dependency.
-2. **Room to grow.** A second transport (HTTP long-polling) can implement the
-   same interface, so a session can switch transports without the rest of the
-   code noticing.
+2. **Room to grow.** HTTP long-polling implements the same interface, so
+   `Client` read/write pumps work for both WebSocket and Engine.IO sessions.
+   See [ENGINEIO.md](ENGINEIO.md) for mounting `EngineIOHandler()`.
 
 ## Packet codecs in one line each
 

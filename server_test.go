@@ -2,6 +2,7 @@ package gosocket
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -347,4 +348,191 @@ func TestGetServerStatsTotalConnections(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("expected TotalConnectionsEver and ActiveConnections after dial")
+}
+
+func TestRoomIdentitiesAndListAllRooms(t *testing.T) {
+	s := New(Config{IdentityKey: "uid"})
+	s.OnConnect(func(ctx *Context) {
+		ctx.JoinRoom("r1")
+		ctx.Set("uid", "user-1")
+	})
+
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts.URL), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if s.RoomSize("r1") == 1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	ids := s.RoomIdentities("r1")
+	if len(ids) != 1 || ids[0] != "user-1" {
+		t.Fatalf("identities = %v", ids)
+	}
+	rooms := s.ListAllRooms()
+	if len(rooms) != 1 || rooms[0].MemberCount != 1 {
+		t.Fatalf("rooms = %+v", rooms)
+	}
+}
+
+func TestShutdownWithMessage(t *testing.T) {
+	s := New(Config{})
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts.URL), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := s.ShutdownWithMessage(ctx, "bye", map[string]string{"reason": "test"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.Close()
+}
+
+func TestEngineIOOnConnectJoinsRoom(t *testing.T) {
+	s := New(Config{})
+	s.OnConnect(func(ctx *Context) { ctx.JoinRoom("poll-room") })
+
+	mux := http.NewServeMux()
+	mux.Handle("/engine.io/", s.EngineIOHandler())
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	sid, err := engineioHandshake(t, ts.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = sid
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if s.RoomSize("poll-room") == 1 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("polling client did not join room")
+}
+
+func TestConnectionLimitRejectsWebSocket(t *testing.T) {
+	s := New(Config{MaxConnections: 1})
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	c1, _, err := websocket.DefaultDialer.Dial(wsURL(ts.URL), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c1.Close()
+
+	time.Sleep(30 * time.Millisecond)
+	req, _ := http.NewRequest(http.MethodGet, ts.URL, nil)
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Sec-WebSocket-Version", "13")
+	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d", rec.Code)
+	}
+}
+
+func TestLoggerMiddleware(t *testing.T) {
+	s := New(Config{})
+	s.Use(s.LoggerMiddleware())
+	ctx := s.newContext(nil, httptest.NewRequest("GET", "/", nil), EventConnect, nil, "", "")
+	if err := s.runMiddlewares(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOnDisconnectHandlerRuns(t *testing.T) {
+	called := false
+	s := New(Config{})
+	s.OnDisconnect(func(ctx *Context) {
+		called = true
+	})
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts.URL), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.WriteMessage(websocket.CloseMessage,
+		websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+	_ = conn.Close()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if called {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("OnDisconnect not called")
+}
+
+func TestRecoverOnConnectMiddlewarePanic(t *testing.T) {
+	s := New(Config{})
+	s.Use(Recover())
+	s.Use(MiddlewareFunc(func(ctx *Context) error {
+		if ctx.Event() == EventConnect {
+			panic("connect panic")
+		}
+		return nil
+	}))
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts.URL), nil)
+	if err != nil {
+		return
+	}
+	_ = conn.Close()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if s.GetServerStats().ActiveConnections == 0 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("panicking connect middleware should not leave active connection")
+}
+
+func TestGetConnectionStatsUnknown(t *testing.T) {
+	s := New(Config{})
+	if s.GetConnectionStats("missing") != nil {
+		t.Fatal("expected nil for unknown client")
+	}
+}
+
+func TestConnectRejectedByMiddleware(t *testing.T) {
+	s := New(Config{})
+	s.Use(MiddlewareFunc(func(ctx *Context) error { return ErrRejected }))
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts.URL), nil)
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+	_ = conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+	_, _, _ = conn.ReadMessage()
+	if s.GetServerStats().ActiveConnections != 0 {
+		t.Fatal("rejected connect should not leave active connection")
+	}
 }

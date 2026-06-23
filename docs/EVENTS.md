@@ -13,7 +13,7 @@ These are reserved by the server for lifecycle and logging. Clients do not send 
 
 ## Optional preset strings (`events.go`)
 
-For convenience (no protocol change), the library exports constants matching common STAG chat usage. You may still use raw string literals.
+For convenience (no protocol change), the library exports constants for common chat-style event names. You may still use raw string literals.
 
 | Constant | String value | Typical direction |
 |----------|--------------|-------------------|
@@ -26,9 +26,9 @@ For convenience (no protocol change), the library exports constants matching com
 
 Adding more presets later is backward compatible: existing apps keep using literals.
 
-## STAG backend (chat) — application events
+## Example chat application events
 
-STAG registers handlers and emits the following on the chat WebSocket (path `/stag/v1/chat/{chatId}/ws`). Payload shapes are defined in the STAG `models` package and REST/OpenAPI if present; this table names events only.
+A typical chat service might register handlers and emit the following on its WebSocket path. Payload shapes are defined by your application; this table names events only.
 
 ### Client → server (register with `Server.On`)
 
@@ -48,11 +48,11 @@ STAG registers handlers and emits the following on the chat WebSocket (path `/st
 | `typing` | Typing fan-out (excludes sender on broadcast) |
 | `error` | `{ "message": "..." }` style error envelope |
 
-Any other `event` name is valid if you register it with `On` in STAG or another app; the table above is what the **current** STAG chat module uses.
+Any other `event` name is valid if you register it with `On` in your app.
 
 ## Why optional constants in the library?
 
-**Pros:** One import for shared strings between Go services, generated mobile clients, and docs; fewer typos; grep-friendly.  
-**Cons:** Library releases should bump or document if STAG renames an event (or STAG keeps literals and ignores presets).
+**Pros:** One import for shared strings between Go services, generated clients, and docs; fewer typos; grep-friendly.  
+**Cons:** Library releases should document if a preset string value changes (apps can always keep literals).
 
-Recommended: use **`Preset*`** for new cross-team clients; STAG may migrate gradually.
+Recommended: use **`Preset*`** when you want shared names across teams; literals remain fully supported.
