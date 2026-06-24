@@ -5,7 +5,6 @@ existing WebSocket handler. Your application handlers (`On`, `Emit`, rooms,
 middleware) stay the same — only the transport path changes.
 
 ## When to use
-
 - Clients that cannot keep a WebSocket open (some proxies, mobile background).
 - You want a **Socket.IO-compatible handshake** before upgrading to WebSocket in
   a later milestone.
@@ -13,7 +12,6 @@ middleware) stay the same — only the transport path changes.
   server.
 
 ## Mount both handlers
-
 Keep your WebSocket route and add Engine.IO on a separate path:
 
 ```go
@@ -32,7 +30,6 @@ Nothing changes for current WebSocket users. Polling is opt-in via the new
 handler.
 
 ## Client flow (polling)
-
 Engine.IO clients use query parameters `EIO=4` and `transport=polling`.
 
 1. **Handshake** — `GET /engine.io?EIO=4&transport=polling`  
@@ -56,12 +53,10 @@ Engine.IO clients use query parameters `EIO=4` and `transport=polling`.
    POST, matching Engine.IO behaviour.
 
 ## End-to-end test as reference
-
 See `TestEngineIOPollingHandshakeAndEvent` in `engineio_test.go` for a full
 handshake → POST event → poll reply flow using `httptest`.
 
 ## Limitations (M2)
-
 - **Polling only** — WebSocket upgrade within Engine.IO is not wired yet.
 - **Same JSON wire** — Socket.IO packet types are not on the wire yet; payloads
   use the existing `{event, payload, ack}` JSON inside Engine.IO message packets.
@@ -69,6 +64,5 @@ handshake → POST event → poll reply flow using `httptest`.
   both if you need both transports.
 
 ## Related docs
-
 - [Architecture](ARCHITECTURE.md) — how Engine.IO fits under your handlers.
 - [Wire protocol](WIRE_PROTOCOL.md) — JSON event shape (unchanged).

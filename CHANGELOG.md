@@ -6,14 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 While the version is `0.x`, minor releases may include documented breaking changes.
 
-## [Unreleased]
+## [Unreleased](https://github.com/dibyaranjan-pradhan/go-socket/compare/v0.3.0...HEAD)
 
 ## [0.3.0](https://github.com/dibyaranjan-pradhan/go-socket/releases/tag/v0.3.0) - 2026-06-24
 
 M2 roadmap milestone merged to `master` — Engine.IO core and HTTP long-polling.
 
 ### Added
-
 - `Server.EngineIOHandler()` — Engine.IO v4 HTTP long-polling endpoint (opt-in mount).
 - Engine.IO session lifecycle: `sid` registry, open handshake packet, ping/pong heartbeat.
 - `internal/polling_transport` — `Transport` implementation that frames JSON in Engine.IO message packets.
@@ -23,16 +22,13 @@ M2 roadmap milestone merged to `master` — Engine.IO core and HTTP long-polling
 - `docs/ENGINEIO.md` usage guide; architecture and README updates.
 
 ### Changed
-
 - Documentation and comments no longer reference any specific downstream product;
 examples use generic paths and chat event names.
 
 ### Fixed
-
 - No user-facing bug fixes in this release; this milestone adds the polling transport path.
 
 ### Notes
-
 - **No breaking changes.** Existing WebSocket `Handler()` and JSON wire format are unchanged.
 - Polling clients must mount `/engine.io/` (or your chosen prefix) separately from WebSocket.
 - WebSocket upgrade within Engine.IO is not wired yet (planned for a later milestone).
@@ -42,7 +38,6 @@ examples use generic paths and chat event names.
 M1 roadmap milestone merged to `master`.
 
 ### Added
-
 - Engine.IO packet codec foundation under `internal/engineio`:
 packet types (`open`, `close`, `ping`, `pong`, `message`, `upgrade`, `noop`)
 and encode/decode helpers.
@@ -57,7 +52,6 @@ positive/negative table tests, fuzz targets, and example-style tests.
 - `docs/ARCHITECTURE.md` and docs index update for contributor-facing internals.
 
 ### Notes
-
 - Public app-level behavior and existing wire usage remain backward compatible.
 - This release is foundational for Engine.IO/Socket.IO protocol work in M2+.
 
@@ -66,7 +60,6 @@ positive/negative table tests, fuzz targets, and example-style tests.
 Earlier milestone release already pushed to `master`.
 
 ### Added
-
 - Connection, server, and room statistics:
 `ConnectionStats`, `ServerStats`, `RoomStats`, plus server query methods.
 - Tunable hub outbound queue via `Config.HubEmitBufferSize`
@@ -77,6 +70,6 @@ Earlier milestone release already pushed to `master`.
 errcheck, and staticcheck targets.
 
 ### Notes
-
 - Changes are additive and backward compatible with existing usage.
+
 
