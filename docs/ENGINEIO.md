@@ -24,7 +24,7 @@ s := gosocket.New(gosocket.Config{
 
 mux := http.NewServeMux()
 mux.Handle("/ws", s.Handler())              // existing WebSocket clients
-mux.Handle("/engine.io/", s.EngineIOHandler()) // Engine.IO v4 polling
+mux.Handle("/engine.io", s.EngineIOHandler()) // Engine.IO v4 polling
 http.ListenAndServe(":8080", mux)
 ```
 
@@ -35,11 +35,11 @@ handler.
 
 Engine.IO clients use query parameters `EIO=4` and `transport=polling`.
 
-1. **Handshake** — `GET /engine.io/?EIO=4&transport=polling`  
+1. **Handshake** — `GET /engine.io?EIO=4&transport=polling`  
    Response is an Engine.IO `open` packet (`0{...}`) with a session id (`sid`),
    ping intervals, and `upgrades: ["websocket"]`.
 
-2. **Send** — `POST /engine.io/?EIO=4&transport=polling&sid=<sid>`  
+2. **Send** — `POST /engine.io?EIO=4&transport=polling&sid=<sid>`  
    Body is one or more Engine.IO packets. A JSON app event is wrapped as a
    `message` packet (`4...`) whose payload is the usual go-socket wire JSON:
 
@@ -47,7 +47,7 @@ Engine.IO clients use query parameters `EIO=4` and `transport=polling`.
    {"event":"hello","payload":{"name":"bob"}}
    ```
 
-3. **Receive** — `GET /engine.io/?EIO=4&transport=polling&sid=<sid>`  
+3. **Receive** — `GET /engine.io?EIO=4&transport=polling&sid=<sid>`  
    Long-poll until the server has outbound data. The body may contain several
    packets separated by `\x1e`. Message packets carry your handler replies.
 

@@ -41,3 +41,8 @@ target/
 *.env
 *_MD.md
 
+# Shipmate
+.agents/*
+.claude/*
+.shipmate/*
+shipmate.json
