@@ -46,3 +46,6 @@ target/
 .claude/*
 .shipmate/*
 shipmate.json
+
+# Autobahn generated reports
+tools/autobahn/reports/

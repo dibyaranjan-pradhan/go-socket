@@ -60,6 +60,12 @@ JSON-over-WebSocket server for Go, built on [gorilla/websocket](https://github.c
    mux.Handle("/engine.io/", s.EngineIOHandler())
   ```
    See **[docs/ENGINEIO.md](./docs/ENGINEIO.md)** for handshake, POST/GET flow, and limitations.
+9. **Engine.IO upgrade + native WebSocket (v0.4.0)** — polling clients can upgrade to WebSocket on the same session. Optional alpha codec:
+  ```go
+   s := gosocket.New(gosocket.Config{NativeWebSocket: false}) // gorilla default
+   mux.Handle("/engine.io/", s.EngineIOHandler())
+  ```
+   See **[docs/UPGRADE.md](./docs/UPGRADE.md)** for probe/upgrade sequence and `make autobahn`.
 
 ## Repository layout
 
@@ -78,6 +84,7 @@ JSON-over-WebSocket server for Go, built on [gorilla/websocket](https://github.c
 - **[docs/MIDDLEWARE.md](./docs/MIDDLEWARE.md)** — `Recover`, `RateLimiter`, `MiddlewareFunc`  
 - **[docs/EVENTS.md](./docs/EVENTS.md)** — synthetic and optional preset event names  
 - **[docs/ENGINEIO.md](./docs/ENGINEIO.md)** — Engine.IO v4 HTTP long-polling (`EngineIOHandler`)  
+- **[docs/UPGRADE.md](./docs/UPGRADE.md)** — polling→WebSocket upgrade, `NativeWebSocket`, Autobahn  
 - **[docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)** — internals for contributors  
 - **[docs/TESTING.md](./docs/TESTING.md)** — coverage goals and test plan
 

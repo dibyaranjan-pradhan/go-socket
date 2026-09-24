@@ -86,7 +86,7 @@ func TestPollHandlerPostAndPoll(t *testing.T) {
 		t.Fatalf("post status = %d", postRec.Code)
 	}
 
-	pt, ok := h.manager.get(hs.SID)
+	pt, ok := h.manager.getPolling(hs.SID)
 	if !ok {
 		t.Fatal("session missing")
 	}
@@ -158,7 +158,7 @@ func TestPollHandlerPollGET(t *testing.T) {
 	openPkt, _ := engineio.Decode(rec.Body.Bytes())
 	hs, _ := engineio.ParseHandshake(openPkt.Data)
 
-	pt, _ := h.manager.get(hs.SID)
+	pt, _ := h.manager.getPolling(hs.SID)
 	_ = pt.Write([]byte(`{"event":"x"}`))
 
 	pollReq := httptest.NewRequest(http.MethodGet, "/?EIO=4&transport=polling&sid="+hs.SID, nil)
@@ -227,7 +227,7 @@ func TestPollHandlerPollEmptyWake(t *testing.T) {
 	openPkt, _ := engineio.Decode(rec.Body.Bytes())
 	hs, _ := engineio.ParseHandshake(openPkt.Data)
 
-	pt, _ := h.manager.get(hs.SID)
+	pt, _ := h.manager.getPolling(hs.SID)
 	pt.signalPoll()
 
 	pollReq := httptest.NewRequest(http.MethodGet, "/?EIO=4&transport=polling&sid="+hs.SID, nil)

@@ -128,9 +128,8 @@ func TestPollingTransportSendCloseClosed(t *testing.T) {
 
 func TestPollManagerRemove(t *testing.T) {
 	m := newPollManager(time.Second, time.Second, 1000)
-	_, pt := m.create()
-	sid := pt.sess.ID
-	m.remove(sid)
+	sess, _ := m.create()
+	m.remove(sess.ID)
 	if m.count() != 0 {
 		t.Fatal("expected 0 sessions")
 	}

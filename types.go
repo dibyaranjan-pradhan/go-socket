@@ -68,6 +68,9 @@ type Config struct {
 	CheckOrigin func(r *http.Request) bool
 	// Logger receives diagnostic lines. If nil, the standard library log package is used.
 	Logger Logger
+	// NativeWebSocket enables the in-tree RFC 6455 WebSocket codec (alpha) instead of
+	// gorilla/websocket. Gorilla remains the default production path.
+	NativeWebSocket bool
 }
 
 func (c *Config) normalized() Config {

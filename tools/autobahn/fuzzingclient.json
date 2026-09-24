@@ -1,0 +1,13 @@
+{
+  "outdir": "/reports",
+  "servers": [
+    {
+      "agent": "go-socket-native",
+      "url": "ws://host.docker.internal:9001",
+      "options": { "version": 18 }
+    }
+  ],
+  "cases": ["*"],
+  "exclude-cases": [],
+  "exclude-agent-cases": {}
+}

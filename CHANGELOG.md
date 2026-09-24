@@ -6,7 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 While the version is `0.x`, minor releases may include documented breaking changes.
 
-## [Unreleased](https://github.com/dibyaranjan-pradhan/go-socket/compare/v0.3.0...HEAD)
+## [Unreleased](https://github.com/dibyaranjan-pradhan/go-socket/compare/v0.4.0...HEAD)
+
+_Nothing yet._
+
+## [0.4.0](https://github.com/dibyaranjan-pradhan/go-socket/releases/tag/v0.4.0) - 2026-09-24
+
+M3 — Engine.IO polling→WebSocket upgrade and alpha native WebSocket codec (`internal/nativews`).
+
+### Added
+
+- Engine.IO **transport upgrade**: probe (`2probe`) → upgrade packet (`5`) → WebSocket GET on the same `sid`; session-preserving swap via `sessionTransport` (read/write pumps keep running).
+- `EngineIOHandler()` routes `transport=websocket` for upgrade as well as `transport=polling`.
+- `Config.NativeWebSocket` — opt-in alpha backend using `internal/nativews` instead of gorilla (gorilla remains default).
+- `internal/nativews` — server-side RFC 6455 WebSocket codec (handshake, frames, ping/pong, close).
+- `TransportUpgrader` (`NewTransportUpgrader`, `NewNativeUpgrader`) shared by `Handler()` and Engine.IO WebSocket upgrade.
+- [Autobahn Testsuite](https://github.com/crossbario/autobahn-testsuite) harness: `make autobahn`, `tools/autobahn/echo`, [docs/UPGRADE.md](docs/UPGRADE.md).
+- E2E tests: upgrade message round-trip, session ID preserved after upgrade, native `Handler()` smoke test.
+
+### Changed
+
+- Engine.IO HTTP handling consolidated in `internal/engineio_handler.go` (replaces `internal/polling_http.go`).
+- `PollHandler` remains a type alias to `EngineIOHandler` for backward-compatible tests.
+
+### Fixed
+
+- **Upgrade disconnect** — closing the polling inbox after upgrade made `ReadPump` see EOF and drop the client; polling now signals `errTransportUpgraded` and swaps transport without tearing down pumps.
+
+### Notes
+
+- **No breaking changes.** Existing `Handler()`, JSON wire, and polling-only Engine.IO clients behave as before.
+- **Native WebSocket is alpha.** Keep gorilla for production until Autobahn reports are clean.
+- **0.3.0 docs** said Engine.IO WebSocket upgrade was “not wired yet”; that limitation is lifted in this release.
 
 ## [0.3.0](https://github.com/dibyaranjan-pradhan/go-socket/releases/tag/v0.3.0) - 2026-06-24
 
@@ -71,5 +102,3 @@ errcheck, and staticcheck targets.
 
 ### Notes
 - Changes are additive and backward compatible with existing usage.
-
-

@@ -1,4 +1,4 @@
-# Engine.IO HTTP long-polling (v0.3.0)
+# Engine.IO HTTP long-polling & upgrade (v0.3.0+)
 
 This page shows how to mount **Engine.IO v4** HTTP long-polling alongside the
 existing WebSocket handler. Your application handlers (`On`, `Emit`, rooms,
@@ -6,9 +6,8 @@ middleware) stay the same — only the transport path changes.
 
 ## When to use
 - Clients that cannot keep a WebSocket open (some proxies, mobile background).
-- You want a **Socket.IO-compatible handshake** before upgrading to WebSocket in
-  a later milestone.
-- You already use go-socket for JSON events and want polling without a second
+- You want a **Socket.IO-compatible handshake** and optional upgrade to WebSocket.
+- You already use go-socket for JSON events and want Engine.IO without a second
   server.
 
 ## Mount both handlers
@@ -22,12 +21,12 @@ s := gosocket.New(gosocket.Config{
 
 mux := http.NewServeMux()
 mux.Handle("/ws", s.Handler())              // existing WebSocket clients
-mux.Handle("/engine.io", s.EngineIOHandler()) // Engine.IO v4 polling
+mux.Handle("/engine.io", s.EngineIOHandler()) // Engine.IO v4 polling + upgrade
 http.ListenAndServe(":8080", mux)
 ```
 
-Nothing changes for current WebSocket users. Polling is opt-in via the new
-handler.
+Nothing changes for current WebSocket users. Polling and upgrade are opt-in via
+the new handler.
 
 ## Client flow (polling)
 Engine.IO clients use query parameters `EIO=4` and `transport=polling`.
@@ -52,17 +51,28 @@ Engine.IO clients use query parameters `EIO=4` and `transport=polling`.
    with an Engine.IO `ping` (`2`). Clients answer with `pong` (`3`) on the next
    POST, matching Engine.IO behaviour.
 
-## End-to-end test as reference
-See `TestEngineIOPollingHandshakeAndEvent` in `engineio_test.go` for a full
-handshake → POST event → poll reply flow using `httptest`.
+## Client flow (upgrade to WebSocket, v0.4.0)
 
-## Limitations (M2)
-- **Polling only** — WebSocket upgrade within Engine.IO is not wired yet.
-- **Same JSON wire** — Socket.IO packet types are not on the wire yet; payloads
-  use the existing `{event, payload, ack}` JSON inside Engine.IO message packets.
+After polling is established, standard Engine.IO clients upgrade:
+
+1. POST `2probe` on the polling URL.
+2. POST upgrade packet `5`.
+3. GET `transport=websocket&sid=<same sid>` with a WebSocket handshake.
+
+The server keeps the same session and client pumps; see **[UPGRADE.md](UPGRADE.md)** for details and tests.
+
+## End-to-end test as reference
+See `TestEngineIOPollingHandshakeAndEvent` in `engineio_test.go` (polling) and
+`TestEngineIOUpgradeEndToEnd` in `upgrade_test.go` (upgrade).
+
+## Limitations
+- **Socket.IO packet types** are not on the wire yet; payloads use the existing
+  `{event, payload, ack}` JSON inside Engine.IO message packets.
 - **Separate mount** — `EngineIOHandler()` does not replace `Handler()`; mount
   both if you need both transports.
+- **Native WebSocket** (`Config.NativeWebSocket`) is alpha; gorilla is default.
 
 ## Related docs
+- [Upgrade guide](UPGRADE.md) — probe/upgrade sequence, native codec, Autobahn.
 - [Architecture](ARCHITECTURE.md) — how Engine.IO fits under your handlers.
 - [Wire protocol](WIRE_PROTOCOL.md) — JSON event shape (unchanged).
