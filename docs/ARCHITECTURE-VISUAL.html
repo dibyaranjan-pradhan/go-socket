@@ -1,0 +1,1245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>go-socket Architecture Deep Dive</title>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <style>
+        :root {
+            --bg: #0a0e27;
+            --surface: #151b3b;
+            --surface-elevated: #1e2749;
+            --surface-recessed: #0d1130;
+            --border: rgba(99, 179, 237, 0.12);
+            --text: #e4e9f7;
+            --text-dim: #8b95b5;
+            --accent: #63b3ed;
+            --accent-bright: #90cdf4;
+            --accent-glow: rgba(99, 179, 237, 0.15);
+            --success: #48bb78;
+            --warning: #ed8936;
+            --danger: #f56565;
+            --code-bg: #1a1f3a;
+        }
+
+        @media (prefers-color-scheme: light) {
+            :root {
+                --bg: #f7fafc;
+                --surface: #ffffff;
+                --surface-elevated: #ffffff;
+                --surface-recessed: #edf2f7;
+                --border: rgba(45, 55, 72, 0.12);
+                --text: #2d3748;
+                --text-dim: #718096;
+                --accent: #3182ce;
+                --accent-bright: #2c5282;
+                --accent-glow: rgba(49, 130, 206, 0.08);
+                --success: #38a169;
+                --warning: #dd6b20;
+                --danger: #e53e3e;
+                --code-bg: #f7fafc;
+            }
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Space Grotesk', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: 
+                radial-gradient(circle at 20% 30%, var(--accent-glow), transparent 50%),
+                radial-gradient(circle at 80% 70%, rgba(237, 137, 54, 0.08), transparent 50%);
+            pointer-events: none;
+            z-index: -1;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 3rem 2rem;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 4rem;
+            animation: fadeUp 0.8s ease-out;
+        }
+
+        h1 {
+            font-size: 3.5rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+            background: linear-gradient(135deg, var(--accent-bright), var(--accent));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .subtitle {
+            font-size: 1.25rem;
+            color: var(--text-dim);
+            font-weight: 400;
+        }
+
+        .nav-wrapper {
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            background: var(--bg);
+            padding: 1rem 0;
+            margin-bottom: 2rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        nav {
+            display: flex;
+            gap: 0.5rem;
+            overflow-x: auto;
+            scrollbar-width: thin;
+            scrollbar-color: var(--accent) transparent;
+        }
+
+        nav::-webkit-scrollbar {
+            height: 4px;
+        }
+
+        nav::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        nav::-webkit-scrollbar-thumb {
+            background: var(--accent);
+            border-radius: 2px;
+        }
+
+        nav a {
+            display: inline-block;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            background: var(--surface);
+            color: var(--text-dim);
+            text-decoration: none;
+            font-size: 0.875rem;
+            font-family: 'JetBrains Mono', monospace;
+            white-space: nowrap;
+            border: 1px solid var(--border);
+            transition: all 0.2s;
+        }
+
+        nav a:hover {
+            background: var(--surface-elevated);
+            color: var(--accent);
+            border-color: var(--accent);
+        }
+
+        section {
+            margin-bottom: 4rem;
+            animation: fadeUp 0.8s ease-out backwards;
+        }
+
+        section:nth-child(2) { animation-delay: 0.1s; }
+        section:nth-child(3) { animation-delay: 0.2s; }
+        section:nth-child(4) { animation-delay: 0.3s; }
+
+        h2 {
+            font-size: 2rem;
+            margin-bottom: 1.5rem;
+            color: var(--accent-bright);
+            font-weight: 600;
+        }
+
+        h3 {
+            font-size: 1.5rem;
+            margin: 2rem 0 1rem;
+            color: var(--text);
+            font-weight: 600;
+        }
+
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+        }
+
+        .card-hero {
+            background: linear-gradient(135deg, var(--surface-elevated), var(--surface));
+            border: 1px solid var(--accent);
+            box-shadow: 0 8px 32px var(--accent-glow);
+        }
+
+        .card-recessed {
+            background: var(--surface-recessed);
+        }
+
+        .grid {
+            display: grid;
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .grid-2 {
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        }
+
+        .grid-3 {
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        }
+
+        code {
+            font-family: 'JetBrains Mono', monospace;
+            background: var(--code-bg);
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.875em;
+            color: var(--accent);
+        }
+
+        pre {
+            background: var(--code-bg);
+            padding: 1.5rem;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin: 1rem 0;
+            border: 1px solid var(--border);
+        }
+
+        pre code {
+            background: none;
+            padding: 0;
+            color: var(--text);
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            font-family: 'JetBrains Mono', monospace;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .badge-primary {
+            background: var(--accent-glow);
+            color: var(--accent-bright);
+            border: 1px solid var(--accent);
+        }
+
+        .badge-success {
+            background: rgba(72, 187, 120, 0.15);
+            color: var(--success);
+            border: 1px solid var(--success);
+        }
+
+        .badge-warning {
+            background: rgba(237, 137, 54, 0.15);
+            color: var(--warning);
+            border: 1px solid var(--warning);
+        }
+
+        .flow-arrow {
+            text-align: center;
+            margin: 1rem 0;
+            color: var(--accent);
+            font-size: 1.5rem;
+        }
+
+        .mermaid-wrap {
+            position: relative;
+            margin: 2rem 0;
+            padding: 2rem;
+            background: var(--surface);
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            overflow: auto;
+        }
+
+        .mermaid {
+            display: flex;
+            justify-content: center;
+        }
+
+        .list-styled {
+            list-style: none;
+            padding-left: 0;
+        }
+
+        .list-styled li {
+            position: relative;
+            padding-left: 2rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .list-styled li::before {
+            content: '→';
+            position: absolute;
+            left: 0;
+            color: var(--accent);
+            font-weight: bold;
+        }
+
+        .highlight-box {
+            background: var(--accent-glow);
+            border-left: 4px solid var(--accent);
+            padding: 1rem 1.5rem;
+            margin: 1.5rem 0;
+            border-radius: 0 8px 8px 0;
+        }
+
+        .two-col {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 2rem;
+            margin: 2rem 0;
+        }
+
+        @media (max-width: 768px) {
+            .two-col {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1.5rem 0;
+        }
+
+        th, td {
+            text-align: left;
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        th {
+            background: var(--surface-elevated);
+            font-weight: 600;
+            color: var(--accent);
+        }
+
+        tr:hover {
+            background: var(--surface-elevated);
+        }
+
+        footer {
+            text-align: center;
+            padding: 2rem 0;
+            margin-top: 4rem;
+            border-top: 1px solid var(--border);
+            font-size: 0.875rem;
+            color: var(--text-dim);
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        footer a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+
+        footer a:hover {
+            text-decoration: underline;
+        }
+
+        @keyframes fadeUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .step-number {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 2rem;
+            height: 2rem;
+            background: var(--accent-glow);
+            color: var(--accent-bright);
+            border-radius: 50%;
+            font-weight: 700;
+            margin-right: 0.75rem;
+            font-size: 0.875rem;
+            border: 2px solid var(--accent);
+        }
+
+        .zoom-controls {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            display: flex;
+            gap: 0.5rem;
+            z-index: 10;
+        }
+
+        .zoom-btn {
+            background: var(--surface-elevated);
+            border: 1px solid var(--border);
+            color: var(--text);
+            width: 32px;
+            height: 32px;
+            border-radius: 6px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.125rem;
+            transition: all 0.2s;
+        }
+
+        .zoom-btn:hover {
+            background: var(--accent);
+            color: var(--bg);
+            border-color: var(--accent);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>go-socket Architecture</h1>
+            <p class="subtitle">A complete guide to understanding your real-time WebSocket library</p>
+        </header>
+
+        <div class="nav-wrapper">
+            <nav>
+                <a href="#overview">Overview</a>
+                <a href="#architecture">Architecture</a>
+                <a href="#websocket-flow">WebSocket Flow</a>
+                <a href="#polling-flow">Polling Flow</a>
+                <a href="#upgrade-flow">Upgrade Flow (M3)</a>
+                <a href="#native-ws">Native WebSocket</a>
+                <a href="#key-concepts">Key Concepts</a>
+                <a href="#data-flow">Data Flow</a>
+                <a href="#patterns">Design Patterns</a>
+            </nav>
+        </div>
+
+        <section id="overview">
+            <h2>What is go-socket?</h2>
+            <div class="card card-hero">
+                <p style="font-size: 1.125rem; margin-bottom: 1rem;">
+                    <strong>go-socket</strong> is a real-time communication library that allows Go servers to exchange JSON messages with clients over WebSocket or HTTP long-polling. It provides <strong>named events</strong>, <strong>rooms</strong> (broadcast groups), and a <strong>middleware pipeline</strong> — all without exposing internal complexity to your application code.
+                </p>
+                <div class="grid grid-3">
+                    <div>
+                        <span class="badge badge-primary">WebSocket</span>
+                        <p style="margin-top: 0.5rem; font-size: 0.875rem;">Persistent bidirectional connection for real-time messaging</p>
+                    </div>
+                    <div>
+                        <span class="badge badge-primary">HTTP Polling</span>
+                        <p style="margin-top: 0.5rem; font-size: 0.875rem;">Engine.IO v4 fallback for restrictive networks</p>
+                    </div>
+                    <div>
+                        <span class="badge badge-success">Zero Dependencies*</span>
+                        <p style="margin-top: 0.5rem; font-size: 0.875rem;">Core is std-lib only (*except gorilla/websocket, isolated)</p>
+                    </div>
+                </div>
+            </div>
+
+            <h3>Use Cases</h3>
+            <div class="grid grid-2">
+                <div class="card">
+                    <h4 style="color: var(--accent); margin-bottom: 0.5rem;">Chat Applications</h4>
+                    <p>Real-time message delivery, typing indicators, room-based conversations</p>
+                </div>
+                <div class="card">
+                    <h4 style="color: var(--accent); margin-bottom: 0.5rem;">Live Dashboards</h4>
+                    <p>Push metrics, status updates, and notifications to connected clients</p>
+                </div>
+                <div class="card">
+                    <h4 style="color: var(--accent); margin-bottom: 0.5rem;">Collaborative Tools</h4>
+                    <p>Multi-user editing, presence awareness, synchronized state</p>
+                </div>
+                <div class="card">
+                    <h4 style="color: var(--accent); margin-bottom: 0.5rem;">IoT Gateways</h4>
+                    <p>Device telemetry, command dispatch, real-time monitoring</p>
+                </div>
+            </div>
+        </section>
+
+        <section id="architecture">
+            <h2>High-Level Architecture</h2>
+            
+            <div class="highlight-box">
+                <strong>The Big Picture:</strong> Your application talks to <code>Server</code>. The Server manages a <code>Hub</code> which tracks all <code>Clients</code>. Each Client uses a <code>Transport</code> (WebSocket or polling) to talk to the actual network connection. Everything is hidden behind clean interfaces.
+            </div>
+
+            <div class="mermaid-wrap">
+                <div class="zoom-controls">
+                    <button class="zoom-btn" onclick="zoomIn(this)">+</button>
+                    <button class="zoom-btn" onclick="zoomOut(this)">−</button>
+                    <button class="zoom-btn" onclick="resetZoom(this)">⟲</button>
+                </div>
+                <div class="mermaid">
+graph TB
+    App["Your Application<br/>(HTTP handlers, business logic)"]
+    Server["Server<br/>Event routing, middleware, lifecycle"]
+    Hub["Hub<br/>Connection registry, room management, fan-out"]
+    Client1["Client 1<br/>Read/Write pumps"]
+    Client2["Client 2<br/>Read/Write pumps"]
+    ClientN["Client N<br/>Read/Write pumps"]
+    WS1["WebSocket Transport<br/>gorilla/websocket wrapper"]
+    Poll2["Polling Transport<br/>Engine.IO framing"]
+    WSN["WebSocket Transport<br/>gorilla/websocket wrapper"]
+
+    App -->|On, Emit, Use| Server
+    Server -->|Register, Unregister, Emit| Hub
+    Hub -->|TrySend| Client1
+    Hub -->|TrySend| Client2
+    Hub -->|TrySend| ClientN
+    Client1 -->|Read, Write, Ping| WS1
+    Client2 -->|Read, Write, Ping| Poll2
+    ClientN -->|Read, Write, Ping| WSN
+    WS1 -.->|Network| Internet1[Internet]
+    Poll2 -.->|HTTP GET/POST| Internet2[Internet]
+    WSN -.->|Network| Internet3[Internet]
+
+    classDef appLayer fill:#63b3ed,stroke:#3182ce,color:#0a0e27;
+    classDef serverLayer fill:#48bb78,stroke:#38a169,color:#0a0e27;
+    classDef hubLayer fill:#ed8936,stroke:#dd6b20,color:#0a0e27;
+    classDef clientLayer fill:#9f7aea,stroke:#805ad5,color:#fff;
+    classDef transportLayer fill:#f56565,stroke:#e53e3e,color:#fff;
+
+    class App appLayer;
+    class Server serverLayer;
+    class Hub hubLayer;
+    class Client1,Client2,ClientN clientLayer;
+    class WS1,Poll2,WSN transportLayer;
+                </div>
+            </div>
+
+            <h3>Layer Responsibilities</h3>
+            <div class="grid grid-2">
+                <div class="card">
+                    <h4><span class="badge badge-primary">Application Layer</span></h4>
+                    <ul class="list-styled">
+                        <li>Register event handlers with <code>server.On(event, handler)</code></li>
+                        <li>Add middleware with <code>server.Use(middleware)</code></li>
+                        <li>Emit messages to clients/rooms</li>
+                        <li>No knowledge of transports or pumps</li>
+                    </ul>
+                </div>
+                <div class="card">
+                    <h4><span class="badge badge-primary">Server Layer</span></h4>
+                    <ul class="list-styled">
+                        <li>HTTP upgrade handling (WebSocket + polling)</li>
+                        <li>Event routing & middleware execution</li>
+                        <li>Client lifecycle (connect, disconnect)</li>
+                        <li>Statistics & observability hooks</li>
+                    </ul>
+                </div>
+                <div class="card">
+                    <h4><span class="badge badge-primary">Hub Layer</span></h4>
+                    <ul class="list-styled">
+                        <li>Connection registry (all active clients)</li>
+                        <li>Room membership tracking</li>
+                        <li>Message fan-out to rooms</li>
+                        <li>Lock-free channel-based operations</li>
+                    </ul>
+                </div>
+                <div class="card">
+                    <h4><span class="badge badge-primary">Client/Transport Layer</span></h4>
+                    <ul class="list-styled">
+                        <li>Read/Write pump goroutines</li>
+                        <li>Ping/pong heartbeat</li>
+                        <li>Transport abstraction (WS or polling)</li>
+                        <li>Outbound message queue</li>
+                    </ul>
+                </div>
+            </div>
+        </section>
+
+        <section id="websocket-flow">
+            <h2>WebSocket Connection Flow</h2>
+            <p>When a client connects via WebSocket, here's the exact sequence of events:</p>
+
+            <div class="card card-recessed">
+                <h3><span class="step-number">1</span> HTTP Upgrade</h3>
+                <p>Client sends HTTP request with <code>Upgrade: websocket</code> header to <code>server.Handler()</code> endpoint.</p>
+                <pre><code>GET /ws HTTP/1.1
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Key: ...
+Sec-WebSocket-Version: 13</code></pre>
+            </div>
+
+            <div class="flow-arrow">↓</div>
+
+            <div class="card card-recessed">
+                <h3><span class="step-number">2</span> Server Creates Transport</h3>
+                <p>The <code>WSUpgrader</code> (wrapping gorilla/websocket) performs the handshake and returns a <code>wsTransport</code> that implements the <code>Transport</code> interface.</p>
+                <pre><code>transport, err := s.upgrader.Upgrade(w, r)
+// transport is now a wsTransport wrapping *websocket.Conn</code></pre>
+            </div>
+
+            <div class="flow-arrow">↓</div>
+
+            <div class="card card-recessed">
+                <h3><span class="step-number">3</span> Client Object Created</h3>
+                <p>Server creates a <code>Client</code> struct with read/write configuration, generates a random ID, and associates it with the transport.</p>
+                <pre><code>c := internal.NewClient(hub, transport, ClientOptions{
+    ID: randomClientID(),
+    MaxMessageSize: cfg.MaxMessageSize,
+    WriteWait: cfg.WriteWait,
+    PingPeriod: cfg.PingInterval,
+    PongWait: cfg.PongWait,
+    SendBuffer: cfg.WriteBufferSize,
+})</code></pre>
+            </div>
+
+            <div class="flow-arrow">↓</div>
+
+            <div class="card card-recessed">
+                <h3><span class="step-number">4</span> Hub Registration</h3>
+                <p>The client is sent to the hub via the <code>hub.Register(c)</code> channel. The hub adds it to the global client map.</p>
+            </div>
+
+            <div class="flow-arrow">↓</div>
+
+            <div class="card card-recessed">
+                <h3><span class="step-number">5</span> Middleware Pipeline</h3>
+                <p>Server runs all registered middleware on a synthetic <code>$connect</code> event. If any middleware returns an error, connection is rejected.</p>
+                <pre><code>connectCtx := s.newContext(ic, r, EventConnect, nil, "", "")
+if err := s.runMiddlewares(connectCtx); err != nil {
+    // Reject connection
+    return
+}</code></pre>
+            </div>
+
+            <div class="flow-arrow">↓</div>
+
+            <div class="card card-recessed">
+                <h3><span class="step-number">6</span> Start Pumps + OnConnect</h3>
+                <p>Server launches two goroutines:</p>
+                <ul class="list-styled">
+                    <li><code>WritePump()</code> — sends outbound messages and periodic pings</li>
+                    <li><code>ReadPump()</code> — reads incoming messages until disconnect</li>
+                </ul>
+                <p style="margin-top: 1rem;">All <code>OnConnect</code> callbacks are invoked (e.g., join room, send welcome).</p>
+            </div>
+
+            <div class="flow-arrow">↓</div>
+
+            <div class="card card-hero">
+                <h3><span class="badge badge-success">✓ Connected</span></h3>
+                <p>Client is now active. Messages flow bidirectionally. Server can emit to this client or broadcast to rooms it joins.</p>
+            </div>
+        </section>
+
+        <section id="polling-flow">
+            <h2>HTTP Polling Connection Flow (Engine.IO)</h2>
+            <p>HTTP long-polling provides a fallback for clients that can't maintain WebSocket connections (proxies, firewalls, mobile background).</p>
+
+            <div class="card card-recessed">
+                <h3><span class="step-number">1</span> Handshake GET</h3>
+                <p>Client sends <code>GET /engine.io/?EIO=4&transport=polling</code> (no <code>sid</code> parameter yet).</p>
+                <pre><code>GET /engine.io/?EIO=4&transport=polling HTTP/1.1</code></pre>
+                <p style="margin-top: 1rem;"><strong>Server response:</strong> Engine.IO <code>open</code> packet (type <code>0</code>) with JSON handshake:</p>
+                <pre><code>0{"sid":"abc123","pingInterval":25000,"pingTimeout":60000,"maxPayload":1048576,"upgrades":["websocket"]}</code></pre>
+            </div>
+
+            <div class="flow-arrow">↓</div>
+
+            <div class="card card-recessed">
+                <h3><span class="step-number">2</span> Session Created</h3>
+                <p>The <code>pollManager</code> creates a session and a <code>pollingTransport</code>. The transport has inbox/outbox channels for bidirectional message passing.</p>
+                <pre><code>sess := &Session{
+    ID: randomSID(),
+    PingInterval: 25s,
+    PingTimeout: 60s,
+    MaxPayload: 1MB,
+}
+pt := newPollingTransport(sess)</code></pre>
+            </div>
+
+            <div class="flow-arrow">↓</div>
+
+            <div class="card card-recessed">
+                <h3><span class="step-number">3</span> Attach Transport</h3>
+                <p>After handshake, server calls <code>s.attachPollTransport(pt, r)</code> which creates a <code>Client</code> with the polling transport and runs the same middleware + pump flow as WebSocket.</p>
+            </div>
+
+            <div class="flow-arrow">↓</div>
+
+            <div class="card card-recessed">
+                <h3><span class="step-number">4</span> Client Sends Messages (POST)</h3>
+                <p>Client POSTs messages to <code>/engine.io/?EIO=4&transport=polling&sid=abc123</code></p>
+                <pre><code>POST /engine.io/?EIO=4&transport=polling&sid=abc123
+Content-Type: text/plain
+
+4{"event":"ping","payload":{}}</code></pre>
+                <p style="margin-top: 1rem;">The <code>4</code> prefix is Engine.IO message packet type. Body is your JSON.</p>
+                <p>Server unwraps Engine.IO framing → delivers inner JSON to <code>dispatch()</code> → your handler runs.</p>
+            </div>
+
+            <div class="flow-arrow">↓</div>
+
+            <div class="card card-recessed">
+                <h3><span class="step-number">5</span> Client Receives Messages (Long-Poll GET)</h3>
+                <p>Client sends <code>GET /engine.io/?EIO=4&transport=polling&sid=abc123</code> and waits.</p>
+                <p style="margin-top: 1rem;"><strong>Server behavior:</strong></p>
+                <ul class="list-styled">
+                    <li>If outbound queue has messages, respond immediately with batched packets separated by <code>\x1e</code></li>
+                    <li>If no messages, wait up to <code>PingTimeout</code></li>
+                    <li>If timeout expires with no data, send Engine.IO ping packet (<code>2</code>)</li>
+                </ul>
+                <pre><code>4{"event":"reply","payload":{"ok":1}}\x1e2</code></pre>
+                <p style="margin-top: 0.5rem; font-size: 0.875rem; color: var(--text-dim);">↑ Message packet + ping, separated by record separator</p>
+            </div>
+
+            <div class="flow-arrow">↓</div>
+
+            <div class="card card-hero">
+                <h3><span class="badge badge-success">✓ Active Session</span></h3>
+                <p>Client repeatedly POSTs to send and GETs to receive. Server maintains session state in <code>pollManager</code>. Same event handlers and room logic as WebSocket.</p>
+            </div>
+        </section>
+
+        <section id="upgrade-flow">
+            <h2>Engine.IO Upgrade Flow (M3 — v0.4.0)</h2>
+            <p>
+                <strong>What we added:</strong> Standard Engine.IO clients can move from HTTP polling to WebSocket on the <em>same session id</em> (<code>sid</code>).
+                <strong>Why:</strong> Socket.IO ecosystems expect this path; it lowers latency after the initial polling phase.
+                <strong>Where:</strong> <code>EngineIOHandler()</code> when <code>transport=websocket</code> — see <code>internal/engineio_handler.go</code> and <code>internal/poll_manager.go</code>.
+            </p>
+
+            <div class="card card-recessed">
+                <h3><span class="step-number">1</span> Probe (still on polling)</h3>
+                <p>Client POSTs Engine.IO ping with probe payload <code>2probe</code>. Server marks the session as probed.</p>
+                <pre><code>POST /engine.io/?EIO=4&transport=polling&sid=abc123
+Body: 2probe</code></pre>
+            </div>
+
+            <div class="flow-arrow">↓</div>
+
+            <div class="card card-recessed">
+                <h3><span class="step-number">2</span> Upgrade packet</h3>
+                <p>Client POSTs upgrade packet type <code>5</code>. Server marks session ready for WebSocket GET.</p>
+            </div>
+
+            <div class="flow-arrow">↓</div>
+
+            <div class="card card-recessed">
+                <h3><span class="step-number">3</span> WebSocket GET (same sid)</h3>
+                <p>Client opens WebSocket on the Engine.IO URL. Server upgrades HTTP and calls <code>applyUpgrade(sid, wsTransport)</code>.</p>
+                <pre><code>GET /engine.io/?EIO=4&transport=websocket&sid=abc123
+Upgrade: websocket</code></pre>
+            </div>
+
+            <div class="flow-arrow">↓</div>
+
+            <div class="card card-recessed">
+                <h3><span class="step-number">4</span> Transport swap (no reconnect)</h3>
+                <p>
+                    <strong>Why <code>sessionTransport</code> exists:</strong> The <code>Client</code> read/write pumps keep running.
+                    <code>sessionTransport.Swap()</code> replaces polling with <code>eioWebSocketTransport</code> (Engine.IO packets inside WS frames).
+                    Polling read returns <code>errTransportUpgraded</code> instead of EOF so pumps do not disconnect.
+                </p>
+            </div>
+
+            <div class="flow-arrow">↓</div>
+
+            <div class="card card-hero">
+                <h3><span class="badge badge-success">✓ Same handlers, lower latency</span></h3>
+                <p>Your <code>On</code> / <code>Emit</code> / room logic unchanged. Hub registration and client ID preserved. Messages now flow over WebSocket text frames wrapped in Engine.IO packet types.</p>
+            </div>
+
+            <div class="highlight-box" style="margin-top: 1.5rem;">
+                <strong>Bug we fixed in M3:</strong> An early implementation closed the polling inbox on upgrade, which made <code>ReadPump</code> see EOF and drop the connection (<code>ActiveConnections</code> went to zero). The signal-and-swap pattern avoids that.
+            </div>
+        </section>
+
+        <section id="native-ws">
+            <h2>Native RFC 6455 Codec (M3 — alpha)</h2>
+            <p>
+                <strong>What:</strong> <code>internal/nativews</code> — go-socket's in-tree WebSocket server codec (RFC 6455).
+                <strong>Why:</strong> Isolate gorilla/websocket so we can validate with Autobahn and eventually remove the dependency.
+                <strong>How to enable:</strong> <code>Config{NativeWebSocket: true}</code> — gorilla remains the default production path.
+            </p>
+            <div class="grid grid-2">
+                <div class="card">
+                    <h4>Default (gorilla)</h4>
+                    <ul class="list-styled">
+                        <li><code>Handler()</code> and Engine.IO WS upgrade</li>
+                        <li>Battle-tested; use in production</li>
+                    </ul>
+                </div>
+                <div class="card">
+                    <h4><code>NativeWebSocket: true</code></h4>
+                    <ul class="list-styled">
+                        <li><code>TransportUpgrader</code> → <code>nativeTransport</code></li>
+                        <li>Run <code>make autobahn</code> to fuzz the codec</li>
+                        <li>Alpha — not for production yet</li>
+                    </ul>
+                </div>
+            </div>
+            <p style="margin-top: 1rem;">Direct <code>Handler()</code> WebSocket still carries plain go-socket JSON. Only the Engine.IO mount wraps payloads in Engine.IO packet prefixes.</p>
+        </section>
+
+        <section id="key-concepts">
+            <h2>Key Concepts Explained</h2>
+
+            <h3>Transport Interface</h3>
+            <div class="card">
+                <p><strong>Why it exists:</strong> To abstract WebSocket and polling behind a common API so <code>Client</code> pumps don't need to know which they're using.</p>
+                <pre><code>type Transport interface {
+    Name() string
+    SetReadLimit(int64)
+    SetReadDeadline(time.Time) error
+    SetWriteDeadline(time.Time) error
+    OnPong(handler func())
+    Read() ([]byte, error)
+    Write(data []byte) error
+    Ping() error
+    SendClose() error
+    Close() error
+}</code></pre>
+                <ul class="list-styled" style="margin-top: 1rem;">
+                    <li><code>wsTransport</code> wraps <code>*websocket.Conn</code> (gorilla)</li>
+                    <li><code>pollingTransport</code> wraps Engine.IO session channels</li>
+                </ul>
+            </div>
+
+            <h3>Client Read/Write Pumps</h3>
+            <div class="card">
+                <p><strong>ReadPump:</strong> Runs in a goroutine, reads messages from transport until EOF or error. On each read:</p>
+                <ul class="list-styled">
+                    <li>Resets read deadline (heartbeat tracking)</li>
+                    <li>Calls <code>onMessage</code> callback → server dispatches to handler</li>
+                    <li>On timeout after multiple missed pongs → calls <code>OnHeartbeatTimeout</code></li>
+                </ul>
+                <br/>
+                <p><strong>WritePump:</strong> Runs in a goroutine, sends messages from the <code>send</code> channel and periodic pings:</p>
+                <ul class="list-styled">
+                    <li>Waits on <code>select</code> for outbound message or ping ticker</li>
+                    <li>Writes to transport with write deadline</li>
+                    <li>On channel close or write error, exits and sends close frame</li>
+                </ul>
+            </div>
+
+            <h3>Hub: The Connection Manager</h3>
+            <div class="card">
+                <p>The hub is a single goroutine running <code>Hub.Run(ctx)</code> that processes channel operations:</p>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Channel</th>
+                            <th>Purpose</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>register</code></td>
+                            <td>Add client to global map</td>
+                        </tr>
+                        <tr>
+                            <td><code>unregister</code></td>
+                            <td>Remove client, clean up rooms</td>
+                        </tr>
+                        <tr>
+                            <td><code>join</code></td>
+                            <td>Add client to room membership</td>
+                        </tr>
+                        <tr>
+                            <td><code>leave</code></td>
+                            <td>Remove client from room</td>
+                        </tr>
+                        <tr>
+                            <td><code>emit</code></td>
+                            <td>Fan-out message to room/client(s)</td>
+                        </tr>
+                    </tbody>
+                </table>
+                <div class="highlight-box" style="margin-top: 1.5rem;">
+                    <strong>Why channels?</strong> Avoids locking. All state mutations happen in one goroutine. Other goroutines send requests via channels.
+                </div>
+            </div>
+
+            <h3>Rooms</h3>
+            <div class="card">
+                <p>A <strong>room</strong> is just a string identifier. The hub maintains:</p>
+                <pre><code>rooms map[string]map[*Client]struct{}</code></pre>
+                <p style="margin-top: 1rem;">When you call <code>ctx.JoinRoom("lobby")</code>, the hub adds your client to <code>rooms["lobby"]</code>.</p>
+                <p style="margin-top: 0.5rem;">When you call <code>ctx.EmitToRoom("lobby", "msg", data)</code>, the server sends an <code>EmitJob</code> to the hub, which loops over <code>rooms["lobby"]</code> and calls <code>TrySend</code> on each client.</p>
+                <div class="two-col" style="margin-top: 1.5rem;">
+                    <div>
+                        <strong>Broadcast:</strong> All clients in room
+                        <pre><code>ctx.BroadcastToRoom("lobby", "msg", data)
+// Excludes sender</code></pre>
+                    </div>
+                    <div>
+                        <strong>Emit:</strong> All clients in room
+                        <pre><code>ctx.EmitToRoom("lobby", "msg", data)
+// Includes sender</code></pre>
+                    </div>
+                </div>
+            </div>
+
+            <h3>Middleware Pipeline</h3>
+            <div class="card">
+                <p>Middleware runs <strong>before</strong> event handlers. It can:</p>
+                <ul class="list-styled">
+                    <li>Log events (<code>LoggerMiddleware</code>)</li>
+                    <li>Recover from panics (<code>Recover</code>)</li>
+                    <li>Rate-limit (<code>RateLimiter</code>)</li>
+                    <li>Authenticate, authorize, validate</li>
+                    <li>Return <code>ErrRejected</code> to block the event</li>
+                </ul>
+                <pre style="margin-top: 1rem;"><code>type Middleware interface {
+    RunMiddleware(*Context) error
+}
+
+s.Use(s.LoggerMiddleware())
+s.Use(Recover())
+s.Use(CustomAuthMiddleware)</code></pre>
+            </div>
+        </section>
+
+        <section id="data-flow">
+            <h2>End-to-End Data Flow</h2>
+            <p>Let's trace a message from a WebSocket client sending <code>{"event":"ping","payload":{}}</code> to the server responding.</p>
+
+            <div class="mermaid-wrap">
+                <div class="zoom-controls">
+                    <button class="zoom-btn" onclick="zoomIn(this)">+</button>
+                    <button class="zoom-btn" onclick="zoomOut(this)">−</button>
+                    <button class="zoom-btn" onclick="resetZoom(this)">⟲</button>
+                </div>
+                <div class="mermaid">
+sequenceDiagram
+    participant C as Client (Browser)
+    participant WS as wsTransport
+    participant RP as ReadPump
+    participant S as Server
+    participant MW as Middleware
+    participant H as Handler
+    participant WP as WritePump
+
+    C->>WS: WebSocket frame: {"event":"ping","payload":{}}
+    WS->>RP: Read() returns JSON bytes
+    RP->>S: onMessage(json)
+    S->>S: Unmarshal ClientWireMessage
+    S->>MW: runMiddlewares(ctx)
+    MW-->>S: no error
+    S->>H: handlers["ping"](ctx)
+    H->>S: ctx.Emit("pong", {})
+    S->>S: Marshal ServerWireMessage
+    S->>WP: client.TrySend(json)
+    WP->>WS: Write(json)
+    WS->>C: WebSocket frame: {"event":"pong","payload":{}}
+                </div>
+            </div>
+
+            <h3>Step-by-Step Breakdown</h3>
+            <div class="grid grid-2">
+                <div class="card card-recessed">
+                    <h4><span class="step-number">1</span> Client Sends</h4>
+                    <p>Browser WebSocket API sends JSON text frame.</p>
+                </div>
+                <div class="card card-recessed">
+                    <h4><span class="step-number">2</span> Transport Read</h4>
+                    <p><code>wsTransport.Read()</code> calls <code>conn.ReadMessage()</code>, returns payload bytes.</p>
+                </div>
+                <div class="card card-recessed">
+                    <h4><span class="step-number">3</span> ReadPump Callback</h4>
+                    <p>ReadPump calls <code>c.onMessage(data)</code> which is wired to <code>server.dispatch()</code>.</p>
+                </div>
+                <div class="card card-recessed">
+                    <h4><span class="step-number">4</span> Server Unmarshal</h4>
+                    <p>Server unmarshals JSON into <code>ClientWireMessage{Event, Payload, Room, ID}</code>.</p>
+                </div>
+                <div class="card card-recessed">
+                    <h4><span class="step-number">5</span> Middleware Run</h4>
+                    <p>All middleware execute in order. If any returns error, event is rejected.</p>
+                </div>
+                <div class="card card-recessed">
+                    <h4><span class="step-number">6</span> Handler Lookup</h4>
+                    <p>Server looks up <code>handlers["ping"]</code>, invokes with <code>Context</code>.</p>
+                </div>
+                <div class="card card-recessed">
+                    <h4><span class="step-number">7</span> Handler Emits</h4>
+                    <p>Handler calls <code>ctx.Emit("pong", data)</code> → server marshals response.</p>
+                </div>
+                <div class="card card-recessed">
+                    <h4><span class="step-number">8</span> Send to Client</h4>
+                    <p><code>client.TrySend(json)</code> → message goes to <code>send</code> channel.</p>
+                </div>
+                <div class="card card-recessed">
+                    <h4><span class="step-number">9</span> WritePump Receives</h4>
+                    <p>WritePump <code>select</code> receives from channel, calls <code>transport.Write()</code>.</p>
+                </div>
+                <div class="card card-recessed">
+                    <h4><span class="step-number">10</span> Transport Write</h4>
+                    <p><code>wsTransport.Write()</code> calls <code>conn.WriteMessage(TextMessage, data)</code>.</p>
+                </div>
+            </div>
+        </section>
+
+        <section id="patterns">
+            <h2>Design Patterns Used</h2>
+
+            <div class="grid grid-2">
+                <div class="card">
+                    <h3>1. Adapter Pattern</h3>
+                    <p><strong>Where:</strong> <code>Transport</code> interface</p>
+                    <p><strong>Why:</strong> Adapts gorilla WebSocket and custom polling logic to a common API so Client doesn't care which it uses.</p>
+                    <div class="highlight-box" style="margin-top: 1rem;">
+                        <code>wsTransport</code> wraps <code>*websocket.Conn</code><br/>
+                        <code>pollingTransport</code> wraps Engine.IO session
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3>2. Channel-Based Concurrency</h3>
+                    <p><strong>Where:</strong> Hub operations</p>
+                    <p><strong>Why:</strong> Avoids locks by funneling all state mutations through channels to a single goroutine.</p>
+                    <pre><code>hub.Register(c)   // → register chan
+hub.Join(c, room) // → join chan
+hub.Emit(job)     // → emit chan</code></pre>
+                </div>
+
+                <div class="card">
+                    <h3>3. Fan-Out Pattern</h3>
+                    <p><strong>Where:</strong> Room broadcasts</p>
+                    <p><strong>Why:</strong> One emit job fans out to all clients in a room without blocking sender.</p>
+                    <pre><code>for client := range room {
+    client.TrySend(data)
+}</code></pre>
+                </div>
+
+                <div class="card">
+                    <h3>4. Middleware Chain</h3>
+                    <p><strong>Where:</strong> Event processing</p>
+                    <p><strong>Why:</strong> Cross-cutting concerns (logging, auth, rate-limit) don't pollute business handlers.</p>
+                    <pre><code>s.Use(LoggerMiddleware())
+s.Use(Recover())
+s.Use(CustomAuth)</code></pre>
+                </div>
+
+                <div class="card">
+                    <h3>5. Pump Goroutines</h3>
+                    <p><strong>Where:</strong> <code>ReadPump</code> and <code>WritePump</code></p>
+                    <p><strong>Why:</strong> Decouples reading (blocking I/O) from writing (channel-driven) so they don't block each other.</p>
+                </div>
+
+                <div class="card">
+                    <h3>6. Context Object</h3>
+                    <p><strong>Where:</strong> <code>Context</code> passed to handlers</p>
+                    <p><strong>Why:</strong> Encapsulates request data, client ref, helpers (Emit, JoinRoom) in one struct.</p>
+                    <pre><code>ctx.ClientID()
+ctx.Emit("reply", data)
+ctx.JoinRoom("lobby")</code></pre>
+                </div>
+            </div>
+        </section>
+
+        <section style="margin-top: 4rem;">
+            <h2>Quick Reference: Common Questions</h2>
+            <details class="card" style="cursor: pointer;">
+                <summary style="font-weight: 600; font-size: 1.125rem;">How do I send a message to all clients in a room?</summary>
+                <pre style="margin-top: 1rem;"><code>ctx.EmitToRoom("lobby", "announcement", map[string]string{
+    "message": "Server maintenance in 5 minutes",
+})</code></pre>
+            </details>
+
+            <details class="card" style="cursor: pointer;">
+                <summary style="font-weight: 600; font-size: 1.125rem;">How do I join a client to a room?</summary>
+                <pre style="margin-top: 1rem;"><code>s.OnConnect(func(ctx *Context) {
+    roomID := extractRoomFromURL(ctx.Request())
+    ctx.JoinRoom(roomID)
+})</code></pre>
+            </details>
+
+            <details class="card" style="cursor: pointer;">
+                <summary style="font-weight: 600; font-size: 1.125rem;">What's the difference between EmitToRoom and BroadcastToRoom?</summary>
+                <p style="margin-top: 1rem;"><code>EmitToRoom</code> sends to all clients in the room, including sender.</p>
+                <p><code>BroadcastToRoom</code> excludes the sender (useful for "user X is typing" messages).</p>
+            </details>
+
+            <details class="card" style="cursor: pointer;">
+                <summary style="font-weight: 600; font-size: 1.125rem;">How do I reject a connection based on auth?</summary>
+                <pre style="margin-top: 1rem;"><code>s.Use(MiddlewareFunc(func(ctx *Context) error {
+    if ctx.Event() == EventConnect {
+        token := ctx.Request().URL.Query().Get("token")
+        if !validateToken(token) {
+            return ErrRejected // connection rejected
+        }
+    }
+    return nil
+}))</code></pre>
+            </details>
+
+            <details class="card" style="cursor: pointer;">
+                <summary style="font-weight: 600; font-size: 1.125rem;">How does Engine.IO polling work vs WebSocket?</summary>
+                <p style="margin-top: 1rem;"><strong>WebSocket:</strong> Single persistent connection. Messages flow bidirectionally over one socket.</p>
+                <p style="margin-top: 0.5rem;"><strong>Polling:</strong> Client repeatedly GETs (to receive) and POSTs (to send). Server wraps JSON in Engine.IO packet frames (<code>4{"event":"..."}</code>). From your handler's perspective, both look identical — same events, same rooms, same API.</p>
+            </details>
+
+            <details class="card" style="cursor: pointer;">
+                <summary style="font-weight: 600; font-size: 1.125rem;">What happens if a client's send buffer fills up?</summary>
+                <p style="margin-top: 1rem;"><code>TrySend</code> uses a non-blocking channel send. If the buffer is full, it logs a warning and calls <code>Shutdown()</code> on that client to avoid blocking the hub.</p>
+                <pre><code>if !client.TrySend(data) {
+    log.Printf("send buffer full, disconnecting client")
+    go client.Shutdown()
+}</code></pre>
+            </details>
+        </section>
+    </div>
+
+    <footer>
+        Generated with <a href="https://armada.sailpoint.com/shipmate/docs/index.html">Shipmate</a>
+    </footer>
+
+    <script>
+        mermaid.initialize({
+            startOnLoad: true,
+            theme: 'base',
+            themeVariables: {
+                primaryColor: '#1e2749',
+                primaryTextColor: '#e4e9f7',
+                primaryBorderColor: '#63b3ed',
+                lineColor: '#63b3ed',
+                secondaryColor: '#151b3b',
+                tertiaryColor: '#0d1130',
+                background: '#0a0e27',
+                mainBkg: '#1e2749',
+                secondBkg: '#151b3b',
+                textColor: '#e4e9f7',
+                fontSize: '14px',
+                fontFamily: 'JetBrains Mono, monospace'
+            },
+            flowchart: {
+                curve: 'basis',
+                padding: 20
+            },
+            sequence: {
+                actorMargin: 80,
+                boxMargin: 20,
+                messageMargin: 50
+            }
+        });
+
+        // Zoom functionality
+        function zoomIn(btn) {
+            const wrap = btn.closest('.mermaid-wrap');
+            const mermaid = wrap.querySelector('.mermaid');
+            const currentScale = mermaid.style.transform ? parseFloat(mermaid.style.transform.replace(/[^0-9.]/g, '')) : 1;
+            const newScale = Math.min(currentScale + 0.2, 3);
+            mermaid.style.transform = `scale(${newScale})`;
+            mermaid.style.transformOrigin = 'top left';
+            wrap.style.cursor = 'grab';
+        }
+
+        function zoomOut(btn) {
+            const wrap = btn.closest('.mermaid-wrap');
+            const mermaid = wrap.querySelector('.mermaid');
+            const currentScale = mermaid.style.transform ? parseFloat(mermaid.style.transform.replace(/[^0-9.]/g, '')) : 1;
+            const newScale = Math.max(currentScale - 0.2, 0.5);
+            mermaid.style.transform = `scale(${newScale})`;
+            mermaid.style.transformOrigin = 'top left';
+            if (newScale <= 1) {
+                wrap.style.cursor = 'default';
+            }
+        }
+
+        function resetZoom(btn) {
+            const wrap = btn.closest('.mermaid-wrap');
+            const mermaid = wrap.querySelector('.mermaid');
+            mermaid.style.transform = 'scale(1)';
+            wrap.style.cursor = 'default';
+        }
+
+        // Smooth scroll for nav links
+        document.querySelectorAll('nav a').forEach(link => {
+            link.addEventListener('click', (e) => {
+                e.preventDefault();
+                const target = document.querySelector(link.getAttribute('href'));
+                target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            });
+        });
+
+        // Drag to pan when zoomed
+        document.querySelectorAll('.mermaid-wrap').forEach(wrap => {
+            let isDragging = false;
+            let startX, startY, scrollLeft, scrollTop;
+
+            wrap.addEventListener('mousedown', (e) => {
+                const mermaid = wrap.querySelector('.mermaid');
+                const scale = mermaid.style.transform ? parseFloat(mermaid.style.transform.replace(/[^0-9.]/g, '')) : 1;
+                if (scale > 1) {
+                    isDragging = true;
+                    wrap.style.cursor = 'grabbing';
+                    startX = e.pageX - wrap.offsetLeft;
+                    startY = e.pageY - wrap.offsetTop;
+                    scrollLeft = wrap.scrollLeft;
+                    scrollTop = wrap.scrollTop;
+                }
+            });
+
+            wrap.addEventListener('mousemove', (e) => {
+                if (!isDragging) return;
+                e.preventDefault();
+                const x = e.pageX - wrap.offsetLeft;
+                const y = e.pageY - wrap.offsetTop;
+                const walkX = (x - startX) * 2;
+                const walkY = (y - startY) * 2;
+                wrap.scrollLeft = scrollLeft - walkX;
+                wrap.scrollTop = scrollTop - walkY;
+            });
+
+            wrap.addEventListener('mouseup', () => {
+                isDragging = false;
+                const mermaid = wrap.querySelector('.mermaid');
+                const scale = mermaid.style.transform ? parseFloat(mermaid.style.transform.replace(/[^0-9.]/g, '')) : 1;
+                wrap.style.cursor = scale > 1 ? 'grab' : 'default';
+            });
+
+            wrap.addEventListener('mouseleave', () => {
+                isDragging = false;
+                const mermaid = wrap.querySelector('.mermaid');
+                const scale = mermaid.style.transform ? parseFloat(mermaid.style.transform.replace(/[^0-9.]/g, '')) : 1;
+                wrap.style.cursor = scale > 1 ? 'grab' : 'default';
+            });
+
+            // Ctrl/Cmd+scroll to zoom
+            wrap.addEventListener('wheel', (e) => {
+                if (e.ctrlKey || e.metaKey) {
+                    e.preventDefault();
+                    const mermaid = wrap.querySelector('.mermaid');
+                    const currentScale = mermaid.style.transform ? parseFloat(mermaid.style.transform.replace(/[^0-9.]/g, '')) : 1;
+                    const delta = e.deltaY > 0 ? -0.1 : 0.1;
+                    const newScale = Math.max(0.5, Math.min(3, currentScale + delta));
+                    mermaid.style.transform = `scale(${newScale})`;
+                    mermaid.style.transformOrigin = 'top left';
+                    wrap.style.cursor = newScale > 1 ? 'grab' : 'default';
+                }
+            });
+        });
+    </script>
+</body>
+</html>

@@ -14,25 +14,26 @@ import (
 // PollAttachFunc starts application pumps after a polling handshake succeeds.
 type PollAttachFunc func(transport Transport, r *http.Request)
 
-// PollHandler serves Engine.IO v4 HTTP long-polling. It is mounted separately
-// from the WebSocket handler so existing clients stay untouched.
-type PollHandler struct {
+// EngineIOHandler serves Engine.IO v4 polling and polling→WebSocket upgrade.
+type EngineIOHandler struct {
 	manager *pollManager
 	attach  PollAttachFunc
 	closed  func() bool
+	wsUp    TransportUpgrader
 }
 
-// NewPollHandler builds a handler for Engine.IO polling transport.
-func NewPollHandler(pingInterval, pingTimeout time.Duration, maxPayload int64, attach PollAttachFunc, closed func() bool) *PollHandler {
-	return &PollHandler{
+// NewEngineIOHandler builds a handler for Engine.IO polling and upgrade.
+func NewEngineIOHandler(pingInterval, pingTimeout time.Duration, maxPayload int64, wsUp TransportUpgrader, attach PollAttachFunc, closed func() bool) *EngineIOHandler {
+	return &EngineIOHandler{
 		manager: newPollManager(pingInterval, pingTimeout, maxPayload),
 		attach:  attach,
 		closed:  closed,
+		wsUp:    wsUp,
 	}
 }
 
-// ServeHTTP implements Engine.IO polling: handshake GET, long-poll GET, POST send.
-func (h *PollHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+// ServeHTTP routes Engine.IO transports: polling (default) and websocket upgrade.
+func (h *EngineIOHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h.closed != nil && h.closed() {
 		http.Error(w, "server closed", http.StatusServiceUnavailable)
 		return
@@ -41,17 +42,25 @@ func (h *PollHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unsupported EIO version", http.StatusBadRequest)
 		return
 	}
-	if r.URL.Query().Get("transport") != engineio.TransportPolling {
-		http.Error(w, "unsupported transport", http.StatusBadRequest)
-		return
-	}
 
+	transport := r.URL.Query().Get("transport")
+	switch transport {
+	case engineio.TransportPolling:
+		h.servePolling(w, r)
+	case engineio.TransportWebSocket:
+		h.serveWebSocketUpgrade(w, r)
+	default:
+		http.Error(w, "unsupported transport", http.StatusBadRequest)
+	}
+}
+
+func (h *EngineIOHandler) servePolling(w http.ResponseWriter, r *http.Request) {
 	sid := r.URL.Query().Get("sid")
 	if sid == "" {
 		h.serveHandshake(w, r)
 		return
 	}
-	pt, ok := h.manager.get(sid)
+	pt, ok := h.manager.getPolling(sid)
 	if !ok {
 		http.Error(w, "unknown sid", http.StatusBadRequest)
 		return
@@ -66,8 +75,8 @@ func (h *PollHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *PollHandler) serveHandshake(w http.ResponseWriter, r *http.Request) {
-	sess, pt := h.manager.create()
+func (h *EngineIOHandler) serveHandshake(w http.ResponseWriter, r *http.Request) {
+	sess, st := h.manager.create()
 	openWire, err := engineio.MarshalOpenPacket(engineio.NewHandshake(
 		sess.ID, sess.PingInterval, sess.PingTimeout, sess.MaxPayload,
 	))
@@ -78,11 +87,34 @@ func (h *PollHandler) serveHandshake(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=UTF-8")
 	_, _ = w.Write(openWire)
 	if h.attach != nil {
-		go h.attach(pt, r)
+		go h.attach(st, r)
 	}
 }
 
-func (h *PollHandler) servePoll(w http.ResponseWriter, pt *pollingTransport) {
+func (h *EngineIOHandler) serveWebSocketUpgrade(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	sid := r.URL.Query().Get("sid")
+	if sid == "" {
+		http.Error(w, "sid required", http.StatusBadRequest)
+		return
+	}
+	if !h.manager.readyForUpgrade(sid) {
+		http.Error(w, "upgrade not ready", http.StatusBadRequest)
+		return
+	}
+	raw, err := h.wsUp.Upgrade(w, r)
+	if err != nil {
+		return
+	}
+	if _, ok := h.manager.applyUpgrade(sid, raw); !ok {
+		_ = raw.Close()
+	}
+}
+
+func (h *EngineIOHandler) servePoll(w http.ResponseWriter, pt *pollingTransport) {
 	wait := pt.sess.PingTimeout
 	if wait <= 0 {
 		wait = 20 * time.Second
@@ -102,7 +134,7 @@ func (h *PollHandler) servePoll(w http.ResponseWriter, pt *pollingTransport) {
 	}
 }
 
-func (h *PollHandler) servePost(w http.ResponseWriter, r *http.Request, pt *pollingTransport) {
+func (h *EngineIOHandler) servePost(w http.ResponseWriter, r *http.Request, pt *pollingTransport) {
 	raw, err := io.ReadAll(io.LimitReader(r.Body, pt.sess.MaxPayload+1))
 	if err != nil {
 		http.Error(w, "read body", http.StatusBadRequest)
@@ -130,7 +162,7 @@ func (h *PollHandler) servePost(w http.ResponseWriter, r *http.Request, pt *poll
 }
 
 // SessionCount exposes active polling sessions (for tests).
-func (h *PollHandler) SessionCount() int {
+func (h *EngineIOHandler) SessionCount() int {
 	return h.manager.count()
 }
 
@@ -138,4 +170,12 @@ func (h *PollHandler) SessionCount() int {
 func IsPollingRequest(r *http.Request) bool {
 	return strings.EqualFold(r.URL.Query().Get("transport"), engineio.TransportPolling) &&
 		r.URL.Query().Get("EIO") == engineio.Version
+}
+
+// PollHandler is an alias kept for tests referencing the M2 name.
+type PollHandler = EngineIOHandler
+
+// NewPollHandler forwards to NewEngineIOHandler for backward-compatible tests.
+func NewPollHandler(pingInterval, pingTimeout time.Duration, maxPayload int64, attach PollAttachFunc, closed func() bool) *PollHandler {
+	return NewEngineIOHandler(pingInterval, pingTimeout, maxPayload, NewWSUpgrader(0, 0, nil), attach, closed)
 }

@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>go-socket — Who Is Who (Fundamentals)</title>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    :root {
+      --bg: #faf8f5;
+      --surface: #fff;
+      --border: rgba(30, 41, 59, 0.1);
+      --text: #1e293b;
+      --dim: #64748b;
+      --user: #7c3aed;
+      --browser: #2563eb;
+      --service: #059669;
+      --lib: #d97706;
+      --accent: #0f766e;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0f172a;
+        --surface: #1e293b;
+        --border: rgba(255,255,255,0.08);
+        --text: #f1f5f9;
+        --dim: #94a3b8;
+      }
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'IBM Plex Sans', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.65;
+    }
+    .wrap { max-width: 960px; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+    h1 { font-size: 2.25rem; margin-bottom: 0.5rem; }
+    .lead { color: var(--dim); font-size: 1.1rem; margin-bottom: 2rem; }
+    h2 { font-size: 1.5rem; margin: 2.5rem 0 1rem; color: var(--accent); }
+    h3 { font-size: 1.15rem; margin: 1.5rem 0 0.75rem; }
+    p, li { margin-bottom: 0.6rem; }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.25rem 1.5rem;
+      margin: 1rem 0;
+    }
+    .actor {
+      border-left: 4px solid;
+      padding-left: 1rem;
+      margin: 1rem 0;
+    }
+    .actor-user { border-color: var(--user); }
+    .actor-browser { border-color: var(--browser); }
+    .actor-service { border-color: var(--service); }
+    .actor-lib { border-color: var(--lib); }
+    .tag {
+      display: inline-block;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 0.7rem;
+      font-weight: 600;
+      padding: 0.15rem 0.5rem;
+      border-radius: 4px;
+      margin-right: 0.5rem;
+      text-transform: uppercase;
+    }
+    .tag-user { background: #ede9fe; color: var(--user); }
+    .tag-browser { background: #dbeafe; color: var(--browser); }
+    .tag-service { background: #d1fae5; color: var(--service); }
+    .tag-lib { background: #ffedd5; color: var(--lib); }
+    code, pre {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 0.85rem;
+    }
+    pre {
+      background: #0f172a;
+      color: #e2e8f0;
+      padding: 1rem;
+      border-radius: 8px;
+      overflow-x: auto;
+      margin: 0.75rem 0;
+    }
+    table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: 0.9rem; }
+    th, td { border: 1px solid var(--border); padding: 0.6rem 0.75rem; text-align: left; }
+    th { background: var(--surface); }
+    .warn {
+      background: #fef3c7;
+      border: 1px solid #f59e0b;
+      border-radius: 8px;
+      padding: 1rem;
+      margin: 1rem 0;
+      color: #92400e;
+    }
+    @media (prefers-color-scheme: dark) {
+      .warn { background: #422006; color: #fcd34d; border-color: #b45309; }
+      pre { background: #020617; }
+    }
+    .mermaid-wrap { margin: 1.5rem 0; overflow-x: auto; }
+    footer {
+      margin-top: 3rem;
+      text-align: center;
+      font-size: 0.8rem;
+      color: var(--dim);
+      font-family: 'IBM Plex Mono', monospace;
+    }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Who is who?</h1>
+  <p class="lead">Four real-world actors. Four confusing names inside the library. This page separates them so you can explain go-socket to anyone — including yourself before a public release.</p>
+
+  <h2>1. The four actors in production</h2>
+
+  <div class="actor actor-user">
+    <span class="tag tag-user">End user</span>
+    <strong>Human</strong> — opens your app in a browser or mobile app. Does not call go-socket directly.
+  </div>
+  <div class="actor actor-browser">
+    <span class="tag tag-browser">Front-end client</span>
+    <strong>Browser / mobile / IoT device</strong> — JavaScript, Swift, etc. This is what people mean when they say “the client” in a product sense. It opens WebSocket or sends HTTP to your URLs.
+  </div>
+  <div class="actor actor-service">
+    <span class="tag tag-service">Your Go service</span>
+    <strong>Your binary</strong> — chat API, dashboard backend, gateway. You write <code>main.go</code>, import go-socket, mount routes, register <code>On("message", ...)</code>. This is <em>your</em> product code.
+  </div>
+  <div class="actor actor-lib">
+    <span class="tag tag-lib">go-socket library</span>
+    <strong>github.com/.../go-socket</strong> — code you depend on. It is not a separate running process. It runs <em>inside</em> your Go service as a package.
+  </div>
+
+  <div class="mermaid-wrap">
+    <div class="mermaid">
+flowchart LR
+  U[End user] --> B[Front-end client<br/>browser / app]
+  B -->|HTTP WebSocket or polling| S[Your Go service<br/>main.go + routes]
+  S --> L[go-socket package<br/>inside same process]
+    </div>
+  </div>
+
+  <h2>2. Confusing names inside the library</h2>
+  <p>go-socket reuses words that mean something else elsewhere. Use this table:</p>
+
+  <table>
+    <thead>
+      <tr><th>Word in go-socket</th><th>What people often think</th><th>What it actually is</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>gosocket.Server</code></td>
+        <td>The whole machine / Kubernetes pod</td>
+        <td>One <strong>object in your process</strong> that owns handlers, hub, and HTTP handlers. You usually create one per app (or one per feature).</td>
+      </tr>
+      <tr>
+        <td><code>internal.Client</code></td>
+        <td>The browser app</td>
+        <td><strong>One connected peer</strong> — one tab, one phone, one device. Library name for “this socket session on the server side.”</td>
+      </tr>
+      <tr>
+        <td><code>Hub</code></td>
+        <td>Redis / message broker</td>
+        <td><strong>In-memory registry</strong> in your process: who is connected, which rooms they joined, fan-out of emits. Not distributed today.</td>
+      </tr>
+      <tr>
+        <td><code>Transport</code></td>
+        <td>Truck / network layer</td>
+        <td><strong>How bytes move</strong> for one peer: WebSocket (<code>wsTransport</code>) or HTTP polling (<code>pollingTransport</code>).</td>
+      </tr>
+      <tr>
+        <td><code>Handler()</code></td>
+        <td>Your business handler</td>
+        <td><strong>HTTP handler for WebSocket upgrade</strong> — mount on a route like <code>/ws</code>.</td>
+      </tr>
+      <tr>
+        <td><code>EngineIOHandler()</code></td>
+        <td>Engine.IO server product</td>
+        <td><strong>HTTP handler for polling</strong> — mount on <code>/engine.io/</code>. Optional.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>3. HTTP polling — who calls what?</h2>
+
+  <h3>Who implements the endpoint?</h3>
+  <p><strong>go-socket implements it.</strong> When your service mounts <code>s.EngineIOHandler()</code>, the library’s <code>PollHandler.ServeHTTP</code> runs on each request.</p>
+  <p><strong>Your Go service only mounts the route</strong> — it does not reimplement handshake or long-poll logic.</p>
+
+  <pre>// YOUR Go service (main.go)
+mux.Handle("/engine.io/", s.EngineIOHandler())  // you wire the path
+mux.Handle("/ws", s.Handler())                  // WebSocket path
+
+http.ListenAndServe(":8080", mux)             // your process listens</pre>
+
+  <h3>Who calls the HTTP polling API?</h3>
+  <p><strong>The front-end client</strong> (or any HTTP client that speaks Engine.IO v4 polling). Not your Go service calling itself.</p>
+  <ul>
+    <li><code>GET /engine.io/?EIO=4&transport=polling</code> — handshake, get <code>sid</code></li>
+    <li><code>POST ...&sid=...</code> — send messages to server</li>
+    <li><code>GET ...&sid=...</code> — long-poll, receive messages from server</li>
+  </ul>
+
+  <h3>Why does that endpoint exist?</h3>
+  <div class="card">
+    <p><strong>WebSocket is not always available.</strong> Corporate proxies, old mobile networks, or strict firewalls block long-lived WebSocket connections.</p>
+    <p><strong>Polling is the fallback:</strong> normal HTTP request/response in a loop. Slower and more chatty, but works where WebSocket does not.</p>
+    <p><strong>Engine.IO shape:</strong> many JavaScript clients (Socket.IO ecosystem) expect this handshake + sid + POST/GET pattern. go-socket provides it so those clients can connect without you building that protocol yourself.</p>
+    <p><strong>If all your clients use raw WebSocket + your JSON wire,</strong> you can skip <code>EngineIOHandler()</code> entirely. Polling is optional.</p>
+  </div>
+
+  <div class="mermaid-wrap">
+    <div class="mermaid">
+sequenceDiagram
+  participant FE as Front-end client
+  participant HTTP as Your Go service HTTP server
+  participant GS as go-socket PollHandler
+  participant H as Your On handlers
+
+  FE->>HTTP: GET /engine.io/?EIO=4&transport=polling
+  HTTP->>GS: EngineIOHandler()
+  GS-->>FE: 0{"sid":"abc",...}
+  GS->>GS: attach session, start Read/Write pumps
+  FE->>HTTP: POST sid=abc body=4{"event":"hello",...}
+  HTTP->>GS: servePost
+  GS->>H: dispatch → On("hello")
+  H->>GS: ctx.Emit("reply", ...)
+  FE->>HTTP: GET sid=abc (long poll)
+  GS-->>FE: 4{"event":"reply",...}
+    </div>
+  </div>
+
+  <h2>4. WebSocket path (simpler mental model)</h2>
+  <pre>Front-end:  new WebSocket("wss://api.example.com/ws")
+     ↓
+Your service: mux.Handle("/ws", s.Handler())
+     ↓
+go-socket: upgrade HTTP → wsTransport → internal.Client → Hub
+     ↓
+Your code:   s.On("hello", func(ctx *Context) { ... })</pre>
+
+  <p>Same handlers, same rooms, same <code>Emit</code> — whether the peer connected via WebSocket or polling.</p>
+
+  <h2>5. Goroutines — who spawns what?</h2>
+  <table>
+    <thead>
+      <tr><th>When</th><th>Goroutine</th><th>Who starts it</th><th>Lifetime</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>gosocket.New()</code></td><td>1 × <code>hub.Run</code></td><td>Library</td><td>Until <code>Shutdown</code></td></tr>
+      <tr><td>Each connected peer (WS or polling after handshake)</td><td>1 × <code>ReadPump</code></td><td>Library</td><td>Until disconnect</td></tr>
+      <tr><td>Each connected peer</td><td>1 × <code>WritePump</code></td><td>Library</td><td>Until disconnect</td></tr>
+      <tr><td>Polling handshake only</td><td>1 × <code>attachPollTransport</code> (short)</td><td>Library</td><td>Starts pumps, then ends</td></tr>
+      <tr><td>Each HTTP request</td><td>1 × from <code>net/http</code></td><td>Go runtime</td><td>Request duration</td></tr>
+      <tr><td>Your handlers</td><td>Whatever you start</td><td>Your service</td><td>Your responsibility</td></tr>
+    </tbody>
+  </table>
+
+  <p><strong>Rule of thumb per live connection:</strong> about <strong>2 library goroutines</strong> (read + write) + shared hub goroutine per <code>gosocket.Server</code>.</p>
+  <p><strong>10,000 connections</strong> (default max) ≈ 20,000 pump goroutines + 1 hub + HTTP workers. That is why <code>MaxConnections</code> exists.</p>
+
+  <h2>6. Memory — rough picture</h2>
+  <p>Exact bytes depend on message size and load. Order-of-magnitude per <strong>connected peer</strong> with defaults:</p>
+  <table>
+    <thead>
+      <tr><th>Component</th><th>Default / config</th><th>Notes</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Outbound queue</td><td><code>WriteBufferSize</code> = 256 messages</td><td>If each message ~2 KB, up to ~512 KB queued per peer when saturated</td></tr>
+      <tr><td>Max single message</td><td><code>MaxMessageSize</code> = 1 MiB</td><td>Cap on one inbound frame</td></tr>
+      <tr><td>WS buffers</td><td><code>ReadBufferSize</code> / write buffer 4 KB each</td><td>Per WebSocket connection (gorilla)</td></tr>
+      <tr><td>Polling channels</td><td>inbox/outbox depth 64 each</td><td>Only for polling transport peers</td></tr>
+      <tr><td>Structs + maps</td><td>small</td><td>Client, session, room membership in hub maps</td></tr>
+      <tr><td>Hub emit queue</td><td><code>HubEmitBufferSize</code> = 256 jobs</td><td><strong>Shared</strong> across all peers on one Server</td></tr>
+    </tbody>
+  </table>
+
+  <div class="warn">
+    <strong>Not a fixed “X MB per connection” number.</strong> Memory grows with queued messages and your handler payloads. Load-test with your real JSON sizes before promising SLAs publicly.
+  </div>
+
+  <h2>7. Latency — what to expect</h2>
+  <table>
+    <thead>
+      <tr><th>Transport</th><th>Typical latency</th><th>Why</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>WebSocket</td><td>Low (ms)</td><td>Persistent connection; server pushes as soon as WritePump sends</td></tr>
+      <tr><td>HTTP polling</td><td>Higher (up to <code>PongWait</code> / poll timeout)</td><td>Client must GET and wait; server may hold request until data or ping timeout</td></tr>
+    </tbody>
+  </table>
+  <p>Polling is a <strong>compatibility</strong> path, not a low-latency path. Document that for public users.</p>
+
+  <h2>8. Scaling — who does what today</h2>
+
+  <h3>What go-socket does today (single process)</h3>
+  <ul>
+    <li>Hub and rooms live in <strong>this process’s RAM</strong></li>
+    <li><code>EmitToRoom</code> only reaches peers connected to <strong>this</strong> instance</li>
+    <li>No built-in Redis / NATS bridge yet (roadmap territory)</li>
+  </ul>
+
+  <h3>What your Go service must do to scale horizontally</h3>
+  <ul>
+    <li><strong>Run multiple replicas</strong> behind a load balancer</li>
+    <li><strong>Sticky sessions</strong> — same user must hit the same pod (WebSocket and polling <code>sid</code> are local to one instance)</li>
+    <li><strong>Cross-instance broadcast</strong> — you add Redis pub/sub, NATS, or similar; on message, publish to other nodes (not in go-socket core today)</li>
+    <li><strong>Tune</strong> <code>MaxConnections</code>, <code>HubEmitBufferSize</code>, <code>WriteBufferSize</code> per replica based on load tests</li>
+  </ul>
+
+  <h3>When you need scaling</h3>
+  <ul>
+    <li>CPU high on broadcast storms → raise <code>HubEmitBufferSize</code>, optimize handlers, shard rooms</li>
+    <li>Memory climbing → check queue depths, message size, connection count</li>
+    <li>Many goroutines → approaching <code>MaxConnections</code>; add replicas with sticky sessions</li>
+    <li>Polling heavy → more HTTP connections and longer-held GETs; need more HTTP timeouts tuning at reverse proxy</li>
+  </ul>
+
+  <h2>9. Engine.IO upgrade (M3 — v0.4.0)</h2>
+  <p>After polling handshake, standard Engine.IO clients can upgrade to WebSocket without a new <code>$connect</code>:</p>
+  <ol>
+    <li>POST <code>2probe</code> on the polling URL</li>
+    <li>POST upgrade packet <code>5</code></li>
+    <li>GET <code>transport=websocket&amp;sid=&lt;same sid&gt;</code></li>
+  </ol>
+  <p><strong>Why it matters:</strong> lower latency and fewer HTTP round-trips while keeping Socket.IO client compatibility.</p>
+  <p><strong>What stays the same:</strong> your event handlers, rooms, middleware — only the byte pipe changes via <code>sessionTransport</code>.</p>
+  <p>Full walkthrough: <code>docs/UPGRADE.md</code> and <code>docs/ARCHITECTURE-VISUAL.html#upgrade-flow</code>.</p>
+
+  <h2>10. Native WebSocket (alpha)</h2>
+  <p><code>Config.NativeWebSocket: true</code> switches the WebSocket backend to <code>internal/nativews</code>. Gorilla remains default. Use for Autobahn runs (<code>make autobahn</code>), not production yet.</p>
+
+  <h2>11. Before public release — honest checklist</h2>
+  <div class="card">
+    <ul>
+      <li>Document the <strong>four actors</strong> (this page) so users know what to mount vs what to call</li>
+      <li>State <strong>WebSocket is primary</strong>; Engine.IO polling is optional fallback</li>
+      <li>Document <strong>single-process hub</strong> — no multi-node room sync out of the box</li>
+      <li>Publish default limits: <code>MaxConnections</code> 10k, message size 1 MiB, queue depths</li>
+      <li>Recommend load test: N connections, M msg/sec, measure RSS and goroutines</li>
+      <li>Clarify: <code>internal.Client</code> = server-side session for one peer, not your front-end app</li>
+    </ul>
+  </div>
+
+  <h2>12. One sentence answers (interview style)</h2>
+  <table>
+    <thead><tr><th>Question</th><th>Answer</th></tr></thead>
+    <tbody>
+      <tr><td>Who calls <code>/engine.io/</code>?</td><td>The browser (or Engine.IO-capable client), not your Go service.</td></tr>
+      <tr><td>Who implements it?</td><td>go-socket, once your service mounts <code>EngineIOHandler()</code>.</td></tr>
+      <tr><td>Is go-socket a separate server?</td><td>No — a library inside your Go binary.</td></tr>
+      <tr><td>What is <code>Client</code> in the code?</td><td>One connected device on the server side.</td></tr>
+      <tr><td>What is <code>Hub</code>?</td><td>In-memory connection + room registry in one process.</td></tr>
+      <tr><td>Goroutines per user?</td><td>~2 (read + write pump) while connected.</td></tr>
+      <tr><td>Can polling upgrade to WebSocket?</td><td>Yes (v0.4.0) — same <code>sid</code>, transport swap, pumps keep running.</td></tr>
+      <tr><td>Ready for multi-region out of the box?</td><td>No — you need sticky sessions + external pub/sub for that.</td></tr>
+    </tbody>
+  </table>
+
+  <footer>go-socket fundamentals · open in browser alongside docs/ARCHITECTURE-VISUAL.html</footer>
+</div>
+<script>
+  mermaid.initialize({ startOnLoad: true, theme: 'neutral' });
+</script>
+</body>
+</html>

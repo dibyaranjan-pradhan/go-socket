@@ -36,8 +36,8 @@ type Server struct {
 	totalConnectionsEver atomic.Int64
 	serverStart          time.Time
 	onHeartbeatTimeout   []func(*Context)
-	upgrader             *internal.WSUpgrader
-	pollHandler          *internal.PollHandler
+	wsUpgrader           internal.TransportUpgrader
+	engineIO             *internal.EngineIOHandler
 	diag                 Logger
 }
 
@@ -55,12 +55,17 @@ func New(cfg Config) *Server {
 		handlers:    make(map[string]EventHandler),
 		diag:        diag,
 		serverStart: time.Now(),
-		upgrader:    internal.NewWSUpgrader(cfg.ReadBufferSize, cfg.WriteBufferSize, cfg.CheckOrigin),
 	}
-	s.pollHandler = internal.NewPollHandler(
+	backend := internal.WebSocketBackendGorilla
+	if cfg.NativeWebSocket {
+		backend = internal.WebSocketBackendNative
+	}
+	s.wsUpgrader = internal.NewTransportUpgrader(backend, cfg.ReadBufferSize, cfg.WriteBufferSize, cfg.CheckOrigin)
+	s.engineIO = internal.NewEngineIOHandler(
 		cfg.PingInterval,
 		cfg.PongWait,
 		cfg.MaxMessageSize,
+		s.wsUpgrader,
 		s.attachPollTransport,
 		func() bool { return s.closed.Load() },
 	)
@@ -121,11 +126,11 @@ func (s *Server) Handler() http.Handler {
 	return http.HandlerFunc(s.serveWS)
 }
 
-// EngineIOHandler returns an http.Handler for Engine.IO v4 HTTP long-polling.
-// Mount it on a path such as /engine.io/ alongside Handler(); existing
-// WebSocket clients are not affected.
+// EngineIOHandler returns an http.Handler for Engine.IO v4 polling and
+// polling→WebSocket upgrade. Mount it on a path such as /engine.io/ alongside
+// Handler(); existing WebSocket clients are not affected.
 func (s *Server) EngineIOHandler() http.Handler {
-	return s.pollHandler
+	return s.engineIO
 }
 
 // GetConnectionStats returns diagnostic metrics for a specific connection.
@@ -318,7 +323,7 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	transport, err := s.upgrader.Upgrade(w, r)
+	transport, err := s.wsUpgrader.Upgrade(w, r)
 	if err != nil {
 		return
 	}

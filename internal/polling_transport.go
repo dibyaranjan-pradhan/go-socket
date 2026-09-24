@@ -19,12 +19,16 @@ import (
 type pollingTransport struct {
 	sess *engineio.Session
 
-	inbox  chan []byte
-	outbox chan []byte
-	wake   chan struct{}
+	inbox   chan []byte
+	outbox  chan []byte
+	wake    chan struct{}
+	upgrade chan struct{}
 
 	onClose func()
 	onPong  func()
+
+	onProbe         func()
+	onUpgradePacket func()
 
 	mu           sync.Mutex
 	readDeadline time.Time
@@ -33,10 +37,11 @@ type pollingTransport struct {
 
 func newPollingTransport(sess *engineio.Session) *pollingTransport {
 	return &pollingTransport{
-		sess:   sess,
-		inbox:  make(chan []byte, 64),
-		outbox: make(chan []byte, 64),
-		wake:   make(chan struct{}, 1),
+		sess:    sess,
+		inbox:   make(chan []byte, 64),
+		outbox:  make(chan []byte, 64),
+		wake:    make(chan struct{}, 1),
+		upgrade: make(chan struct{}, 1),
 	}
 }
 
@@ -76,6 +81,8 @@ func (t *pollingTransport) Read() ([]byte, error) {
 			return nil, io.EOF
 		}
 		return msg, nil
+	case <-t.upgrade:
+		return nil, errTransportUpgraded
 	case <-timer.C:
 		return nil, &pollTimeoutError{}
 	}
@@ -114,6 +121,13 @@ func (t *pollingTransport) SendClose() error {
 	return t.enqueueOutbound(wire)
 }
 
+func (t *pollingTransport) signalUpgrade() {
+	select {
+	case t.upgrade <- struct{}{}:
+	default:
+	}
+}
+
 func (t *pollingTransport) Close() error {
 	if t.closed.Swap(true) {
 		return nil
@@ -139,16 +153,27 @@ func (t *pollingTransport) handleInbound(packets []engineio.Packet) error {
 func (t *pollingTransport) handleOne(p engineio.Packet) error {
 	switch p.Type {
 	case engineio.Ping:
+		if engineio.IsProbe(p.Data) && t.onProbe != nil {
+			t.onProbe()
+		}
 		wire, err := engineio.Encode(engineio.Packet{Type: engineio.Pong, Data: p.Data})
 		if err != nil {
 			return err
 		}
 		return t.enqueueOutbound(wire)
 	case engineio.Pong:
+		if engineio.IsProbe(p.Data) && t.onProbe != nil {
+			t.onProbe()
+		}
 		t.firePong()
 		return nil
 	case engineio.Message:
 		return t.deliverInbound(p.Data)
+	case engineio.Upgrade:
+		if t.onUpgradePacket != nil {
+			t.onUpgradePacket()
+		}
+		return nil
 	case engineio.Close:
 		_ = t.Close()
 		return io.EOF

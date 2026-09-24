@@ -19,7 +19,11 @@ STATICCHECK ?= honnef.co/go/tools/cmd/staticcheck@latest
 	coverage coverage-html print-coverage \
 	mod-verify tidy \
 	vulncheck errcheck staticcheck \
+	autobahn autobahn-echo \
 	clean
+
+AUTOBAHN_PORT    ?= 9001
+AUTOBAHN_REPORT  ?= tools/autobahn/reports
 
 ## help: Show this list
 help:
@@ -46,6 +50,10 @@ help:
 	@echo "Static analysis (via go run; network on first use):"
 	@echo "  make errcheck         errcheck ./..."
 	@echo "  make staticcheck      staticcheck ./..."
+	@echo ""
+	@echo "Autobahn (native RFC 6455, requires Docker):"
+	@echo "  make autobahn-echo    run echo server on :$(AUTOBAHN_PORT)"
+	@echo "  make autobahn         echo + Autobahn wstest → $(AUTOBAHN_REPORT)/"
 	@echo ""
 	@echo "Aggregates:"
 	@echo "  make check            fmt vet errcheck staticcheck vulncheck"
@@ -87,7 +95,7 @@ test-race:
 
 ## coverage: generate coverage profile (atomic mode; good for concurrency)
 coverage: mod-verify
-	$(GO) test ./... -count=1 -coverprofile=$(COVERAGE_OUT) -covermode=atomic
+	$(GO) test $$( $(GO) list ./... | grep -v /tools/ ) -count=1 -coverprofile=$(COVERAGE_OUT) -covermode=atomic
 
 ## coverage-html: coverage report as HTML
 coverage-html: coverage
@@ -119,6 +127,25 @@ errcheck:
 ## staticcheck: honnef.co/go/tools static analysis
 staticcheck:
 	$(GO) run $(STATICCHECK) ./...
+
+## autobahn-echo: RFC 6455 echo server for manual Autobahn runs
+autobahn-echo:
+	$(GO) run ./tools/autobahn/echo -addr :$(AUTOBAHN_PORT)
+
+## autobahn: start echo server and run Autobahn Testsuite via Docker
+autobahn:
+	@mkdir -p $(AUTOBAHN_REPORT)
+	@echo "Starting echo on :$(AUTOBAHN_PORT)..."
+	@$(GO) run ./tools/autobahn/echo -addr :$(AUTOBAHN_PORT) & \
+	ECHO_PID=$$!; \
+	trap 'kill $$ECHO_PID 2>/dev/null' EXIT; \
+	sleep 2; \
+	docker run --rm \
+	  -v "$$(pwd)/tools/autobahn:/config" \
+	  -v "$$(pwd)/$(AUTOBAHN_REPORT):/reports" \
+	  crossbario/autobahn-testsuite \
+	  wstest -m fuzzingclient -s /config/fuzzingclient.json; \
+	STATUS=$$?; kill $$ECHO_PID 2>/dev/null; exit $$STATUS
 
 ## clean: remove generated coverage artifacts
 clean:

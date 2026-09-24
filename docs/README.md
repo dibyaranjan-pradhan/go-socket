@@ -12,6 +12,9 @@ This folder holds deeper references and planning:
 | [TESTING.md](./TESTING.md) | Unit-test plan and coverage target (~85%) |
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | Internals: layers, packet codecs, the `Transport` seam (for contributors) |
 | [ENGINEIO.md](./ENGINEIO.md) | Engine.IO v4 HTTP long-polling: mount `EngineIOHandler()`, client flow |
+| [UPGRADE.md](./UPGRADE.md) | Polling→WebSocket upgrade, `NativeWebSocket`, Autobahn harness |
+
+**v0.4.0 (library):** Engine.IO **transport upgrade** (probe → upgrade → WebSocket on same `sid`); **`Config.NativeWebSocket`** for alpha RFC 6455 codec; **`make autobahn`**. See [UPGRADE.md](./UPGRADE.md).
 
 **v0.3.0 (library):** **`Server.EngineIOHandler()`** for Engine.IO v4 HTTP long-polling — session handshake, ping/pong heartbeat, and JSON event round-trip over polling. WebSocket `Handler()` and the JSON wire are unchanged. See [ENGINEIO.md](./ENGINEIO.md).
 
