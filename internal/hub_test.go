@@ -181,11 +181,11 @@ func TestHubLogEmitSaturated(t *testing.T) {
 	h := NewHub(PrintfLoggerFunc(func(string, ...interface{}) { logged = true }), 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go h.Run(ctx)
 
+	// Run is started afterwards so the single-slot queue is full deterministically.
 	h.Emit(EmitJob{Room: "x", Data: []byte("1")})
 	h.Emit(EmitJob{Room: "x", Data: []byte("2")})
-	time.Sleep(20 * time.Millisecond)
+	go h.Run(ctx)
 	if !logged {
 		t.Fatal("expected saturated log")
 	}

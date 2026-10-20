@@ -1,9 +1,12 @@
+// Copyright (c) 2026 Dibyaranjan Pradhan. All rights reserved.
+
 // Package internal implements the connection hub for gosocket. It must not be imported outside the gosocket module tree.
 package internal
 
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -26,14 +29,22 @@ type Hub struct {
 	join       chan roomJoin
 	leave      chan roomLeave
 	emit       chan EmitJob
+	transfer   chan clientTransfer
 
 	closed chan struct{}
 	log    PrintfLogger
+
+	// emitsDropped counts jobs lost to a saturated hub queue (before sequencing).
+	emitsDropped atomic.Int64
 }
 
 type roomJoin struct {
 	c    *Client
 	room string
+}
+
+type clientTransfer struct {
+	from, to *Client
 }
 
 type roomLeave struct {
@@ -55,6 +66,8 @@ type EmitJob struct {
 	AllClients bool
 	// Data is the fully serialized wire frame.
 	Data []byte
+	// Policy decides what happens when a target's queue is full. Zero is PolicyDisconnect.
+	Policy SendPolicy
 }
 
 // NewHub constructs a hub with configurable emit buffer size.
@@ -72,6 +85,7 @@ func NewHub(log PrintfLogger, emitBufferSize int) *Hub {
 		join:        make(chan roomJoin),
 		leave:       make(chan roomLeave),
 		emit:        make(chan EmitJob, emitBufferSize),
+		transfer:    make(chan clientTransfer),
 		closed:      make(chan struct{}),
 		log:         log,
 	}
@@ -94,6 +108,8 @@ func (h *Hub) Run(ctx context.Context) {
 			h.joinRoom(j)
 		case j := <-h.leave:
 			h.leaveRoom(j)
+		case t := <-h.transfer:
+			h.transferMembership(t)
 		case e := <-h.emit:
 			h.emitToTargets(e)
 		}
@@ -133,11 +149,12 @@ func (h *Hub) leaveRoom(j roomLeave) {
 func (h *Hub) emitToTargets(e EmitJob) {
 	targets := h.collectTargets(e)
 	for _, c := range targets {
-		if c.TrySend(e.Data) {
+		if c.TrySendPolicy(e.Data, e.Policy) {
 			continue
 		}
 		h.logEmitQueueFull(e, c)
-		go c.Shutdown()
+		// Resumable: with recovery on, the frame is already buffered and the peer replays it.
+		go c.ShutdownResumable()
 	}
 }
 
@@ -182,6 +199,20 @@ func (h *Hub) collectTargets(e EmitJob) []*Client {
 		out = append(out, c)
 	}
 	return out
+}
+
+// transferMembership moves room membership from a session's previous client to the
+// one that resumed it. It runs inside Run, so no emit observes a half-moved state.
+func (h *Hub) transferMembership(t clientTransfer) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	delete(h.clients, t.from)
+	for _, m := range h.rooms {
+		if _, ok := m[t.from]; ok {
+			delete(m, t.from)
+			m[t.to] = struct{}{}
+		}
+	}
 }
 
 func (h *Hub) removeClientMaps(c *Client) {
@@ -256,6 +287,20 @@ func (h *Hub) Leave(c *Client, room string) {
 	}
 }
 
+// Transfer moves from's room memberships to to and drops from from the hub.
+func (h *Hub) Transfer(from, to *Client) {
+	if from == nil || to == nil || from == to {
+		return
+	}
+	select {
+	case <-h.closed:
+	case h.transfer <- clientTransfer{from: from, to: to}:
+	}
+}
+
+// EmitsDropped returns how many emit jobs were discarded because the hub queue was full.
+func (h *Hub) EmitsDropped() int64 { return h.emitsDropped.Load() }
+
 // Emit schedules delivery to targets derived under lock; sends are non-blocking per client.
 func (h *Hub) Emit(job EmitJob) {
 	select {
@@ -264,6 +309,7 @@ func (h *Hub) Emit(job EmitJob) {
 	case h.emit <- job:
 		return
 	default:
+		h.emitsDropped.Add(1)
 		h.logHubEmitSaturated(job)
 	}
 }
@@ -280,11 +326,17 @@ func (h *Hub) Wait() {
 	<-h.closed
 }
 
-// RoomSize returns the number of clients in a room. Returns 0 if room does not exist.
+// RoomSize returns the number of live clients in a room (parked sessions are excluded). Returns 0 if room does not exist.
 func (h *Hub) RoomSize(room string) int {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	return len(h.rooms[room])
+	n := 0
+	for c := range h.rooms[room] {
+		if !c.Parked() {
+			n++
+		}
+	}
+	return n
 }
 
 // RoomClients returns a snapshot of clients in a room. Returns nil if room does not exist.
@@ -297,7 +349,12 @@ func (h *Hub) RoomClients(room string) []*Client {
 	}
 	out := make([]*Client, 0, len(m))
 	for c := range m {
-		out = append(out, c)
+		if !c.Parked() {
+			out = append(out, c)
+		}
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }

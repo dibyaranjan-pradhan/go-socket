@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Dibyaranjan Pradhan. All rights reserved.
+
 package gosocket
 
 // recoverMiddleware is the concrete type returned by Recover(); detected via type assertion (no reflect).

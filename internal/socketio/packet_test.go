@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Dibyaranjan Pradhan. All rights reserved.
+
 package socketio
 
 import (

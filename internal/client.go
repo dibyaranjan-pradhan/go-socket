@@ -35,6 +35,15 @@ type Client struct {
 	shutdownOnce sync.Once
 	meta         sync.Map
 
+	// Recovery state. session is atomic because the hub goroutine reads it while
+	// the connect path binds it. replay is written before WritePump starts.
+	session  atomic.Pointer[Session]
+	replay   [][]byte
+	parked   atomic.Bool
+	resumed  atomic.Bool
+	noResume atomic.Bool
+	dropped  atomic.Int64
+
 	rateMu    sync.Mutex
 	lastEvent time.Time
 
@@ -124,27 +133,110 @@ func (c *Client) AllowEvent(interval time.Duration) error {
 	return nil
 }
 
-// TrySend enqueues a wire frame without blocking. It returns false if the buffer is full or the client has shut down.
-func (c *Client) TrySend(data []byte) (ok bool) {
+type enqueueResult uint8
+
+const (
+	enqOK enqueueResult = iota
+	enqFull
+	enqClosed
+)
+
+// enqueue is a non-blocking send that tolerates a concurrently closed channel.
+func (c *Client) enqueue(frame []byte) (res enqueueResult) {
 	defer func() {
 		if recover() != nil {
-			ok = false
+			res = enqClosed
 		}
 	}()
 	select {
-	case c.send <- data:
-		return true
+	case c.send <- frame:
+		return enqOK
 	default:
-		return false
+		return enqFull
 	}
 }
 
-// Shutdown closes the socket and outbound channel exactly once.
+// TrySend enqueues a wire frame without blocking. It returns false if the buffer is full or the client has shut down.
+func (c *Client) TrySend(data []byte) bool {
+	return c.TrySendPolicy(data, PolicyDisconnect)
+}
+
+// TrySendPolicy is TrySend with a per-frame backpressure policy. A false return
+// means the caller should disconnect the peer; Drop and Volatile never ask for that
+// on a full queue. With a bound Session the frame is sequenced and buffered first.
+func (c *Client) TrySendPolicy(data []byte, pol SendPolicy) bool {
+	if s := c.session.Load(); s != nil {
+		return s.deliver(data, pol)
+	}
+	switch c.enqueue(data) {
+	case enqOK:
+		return true
+	case enqFull:
+		if pol == PolicyDisconnect {
+			return false
+		}
+		c.dropped.Add(1)
+		return true
+	}
+	return false
+}
+
+// Shutdown closes the socket and outbound channel exactly once. It is a terminal
+// close: the session (if any) will not be resumable.
 func (c *Client) Shutdown() {
+	c.noResume.Store(true)
+	c.closeRaw()
+}
+
+// ShutdownResumable closes the transport but leaves the session resumable. Used
+// for slow-consumer disconnects, where the point is that the peer reconnects and replays.
+func (c *Client) ShutdownResumable() {
+	c.closeRaw()
+}
+
+func (c *Client) closeRaw() {
 	c.shutdownOnce.Do(func() {
 		_ = c.transport.Close()
 		close(c.send)
 	})
+}
+
+// Session returns the bound recovery session, or nil when recovery is off.
+func (c *Client) Session() *Session { return c.session.Load() }
+
+// Resumed reports whether this connection continued an earlier session.
+func (c *Client) Resumed() bool { return c.resumed.Load() }
+
+// SetResumed records the handshake outcome for handlers.
+func (c *Client) SetResumed(v bool) { c.resumed.Store(v) }
+
+// Parked reports whether the client is a detached session member awaiting resume.
+func (c *Client) Parked() bool { return c.parked.Load() }
+
+// CopyMetaFrom carries metadata over from the connection this one replaces.
+func (c *Client) CopyMetaFrom(prev *Client) {
+	if prev == nil || prev == c {
+		return
+	}
+	prev.meta.Range(func(k, v any) bool {
+		c.meta.LoadOrStore(k, v)
+		return true
+	})
+}
+
+// retire runs when the read side ends. Recovery-bound clients stay registered in
+// the hub (as parked members) so room broadcasts keep landing in the replay buffer.
+func (c *Client) retire() {
+	s := c.session.Load()
+	if s == nil {
+		c.hub.Unregister(c)
+		return
+	}
+	switch s.store.Leave(s, c, !c.noResume.Load()) {
+	case LeaveParked, LeaveDisplaced:
+		return
+	}
+	c.hub.Unregister(c)
 }
 
 // GetStats returns a snapshot of this client's metrics.
@@ -154,6 +246,11 @@ func (c *Client) GetStats() *ClientStats {
 	utilization := float32(0)
 	if bufferCap > 0 {
 		utilization = float32(bufferLen) / float32(bufferCap)
+	}
+
+	dropped := c.dropped.Load()
+	if sess := c.session.Load(); sess != nil {
+		dropped += sess.Dropped()
 	}
 
 	lastActivity := c.connectedAt
@@ -166,6 +263,7 @@ func (c *Client) GetStats() *ClientStats {
 		BytesReceived:     c.bytesReceived.Load(),
 		MessagesSent:      c.messagesSent.Load(),
 		MessagesReceived:  c.messagesRcvd.Load(),
+		MessagesDropped:   dropped,
 		BufferUtilization: utilization,
 		ConnectedAt:       c.connectedAt,
 		LastActivity:      lastActivity,
@@ -199,8 +297,8 @@ func (c *Client) IncrementMissedPongs() bool {
 // ReadPump reads JSON frames until the connection ends or fails.
 func (c *Client) ReadPump() {
 	defer func() {
-		c.hub.Unregister(c)
-		c.Shutdown()
+		c.retire()
+		c.closeRaw()
 		if c.onDone != nil {
 			c.onDone()
 		}
@@ -244,6 +342,17 @@ func (c *Client) WritePump() {
 	ticker := time.NewTicker(c.pingPeriod)
 	defer ticker.Stop()
 	defer c.writeCloseFrame()
+
+	// Handshake control frame and replay go first so they precede any live frame.
+	for _, msg := range c.replay {
+		_ = c.transport.SetWriteDeadline(time.Now().Add(c.writeWait))
+		if err := c.transport.Write(msg); err != nil {
+			return
+		}
+		c.recordBytesSent(int64(len(msg)))
+		c.recordMessageSent()
+	}
+	c.replay = nil
 
 	for {
 		select {

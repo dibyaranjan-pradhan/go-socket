@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Dibyaranjan Pradhan. All rights reserved.
+
 package engineio
 
 // Engine.IO v4 constants shared by the polling transport and HTTP handler.

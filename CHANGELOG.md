@@ -6,9 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 While the version is `0.x`, minor releases may include documented breaking changes.
 
-## [Unreleased](https://github.com/dibyaranjan-pradhan/go-socket/compare/v0.4.0...HEAD)
+## [Unreleased](https://github.com/dibyaranjan-pradhan/go-socket/compare/v0.5.0...HEAD)
 
 _Nothing yet._
+
+## [0.5.0](https://github.com/dibyaranjan-pradhan/go-socket/releases/tag/v0.5.0) - 2026-10-20
+
+M4 — session resume and connection-state recovery, per-emit backpressure policy, idempotency keys.
+
+### Added
+
+- **Session recovery** (opt-in via `Config.SessionRecovery`): per-session monotonic `seq` on outbound events, bounded replay buffer, `$session` handshake frame, resume with `?gs_session=&gs_seq=` (or `X-GoSocket-*` headers) on the WebSocket URL and the Engine.IO handshake. See [docs/RECOVERY.md](docs/RECOVERY.md).
+- Parked sessions stay room members and keep buffering broadcasts until resumed, expired (`SessionTTL`), or evicted (`MaxParkedSessions`); `OnSessionExpire` callback.
+- `SessionRecoveryConfig.OwnerFunc` binds a session to a verified principal so a leaked token cannot be resumed by someone else.
+- **Backpressure policy**: `BackpressureDisconnect` / `BackpressureDrop` / `BackpressureVolatile`, per emit via `ctx.EmitWith`, `EmitToRoomWith`, `BroadcastToRoomWith`, and server-wide via `Config.DefaultBackpressure`.
+- **Idempotency keys**: inbound `idempotencyKey` is deduplicated per session window; `EmitOptions.IdempotencyKey` is echoed on outbound events.
+- Client `$ack` control event to release buffered events early.
+- `Context.SessionID()` and `Context.Resumed()`.
+- Stats: `ServerStats` (`Sessions`, `SessionsParked`, `SessionsResumed`, `MessagesReplayed`, `DuplicatesSuppressed`, `HubEmitsDropped`) and `ConnectionStats` (`MessagesDropped`, `SessionID`).
+
+### Changed
+
+- Hub `RoomSize`/room views exclude parked (disconnected) sessions; with recovery disabled no session is ever parked, so results are unchanged.
+- A slow-consumer disconnect no longer ends the session when recovery is enabled; `ctx.Disconnect()` still does.
+
+### Fixed
+
+- `TestHubLogEmitSaturated` was timing-dependent; it now fills the queue deterministically.
+
+### Notes
+
+- **No breaking changes.** With `SessionRecovery.Enabled == false` (default) the wire format and behaviour are identical to 0.4.0; new JSON fields are `omitempty`.
+- Recovery state is per process; cross-node resume is out of scope until the Redis/NATS adapter milestone.
 
 ## [0.4.0](https://github.com/dibyaranjan-pradhan/go-socket/releases/tag/v0.4.0) - 2026-09-24
 

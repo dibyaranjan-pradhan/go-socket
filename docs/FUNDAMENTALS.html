@@ -331,7 +331,14 @@ Your code:   s.On("hello", func(ctx *Context) { ... })</pre>
   <h2>10. Native WebSocket (alpha)</h2>
   <p><code>Config.NativeWebSocket: true</code> switches the WebSocket backend to <code>internal/nativews</code>. Gorilla remains default. Use for Autobahn runs (<code>make autobahn</code>), not production yet.</p>
 
-  <h2>11. Before public release — honest checklist</h2>
+  <h2>11. Session recovery (M4 — v0.5.0)</h2>
+  <p><strong>What:</strong> opt-in. The server numbers every outbound event (<code>seq</code>), keeps a bounded replay buffer per session, and a reconnecting client sends <code>?gs_session=&lt;id&gt;&amp;gs_seq=&lt;last seen&gt;</code> to get the missed events replayed in order.</p>
+  <p><strong>Why:</strong> phones and IoT devices lose connectivity constantly; without it every drop loses in-flight events and forces a full re-sync.</p>
+  <p><strong>Where:</strong> <code>Config.SessionRecovery</code>; state in <code>internal/session.go</code>. A dropped <code>Client</code> stays in the hub as a hidden "parked" member so room broadcasts keep buffering until the session resumes or expires.</p>
+  <p><strong>How:</strong> first frame on every connection is <code>$session</code> (token + whether it resumed). If a resume is impossible (buffer overrun, expired, wrong owner) you get <code>resumed:false</code> and a fresh session — resync your state.</p>
+  <p><strong>Also in M4:</strong> per-emit backpressure policy (<code>Disconnect</code> / <code>Drop</code> / <code>Volatile</code>) and idempotency keys for at-least-once dedupe. Per-process only: multi-node resume needs the later Redis/NATS adapter. Full reference: <code>docs/RECOVERY.md</code>.</p>
+
+  <h2>12. Before public release — honest checklist</h2>
   <div class="card">
     <ul>
       <li>Document the <strong>four actors</strong> (this page) so users know what to mount vs what to call</li>
@@ -343,7 +350,7 @@ Your code:   s.On("hello", func(ctx *Context) { ... })</pre>
     </ul>
   </div>
 
-  <h2>12. One sentence answers (interview style)</h2>
+  <h2>13. One sentence answers (interview style)</h2>
   <table>
     <thead><tr><th>Question</th><th>Answer</th></tr></thead>
     <tbody>
@@ -354,6 +361,7 @@ Your code:   s.On("hello", func(ctx *Context) { ... })</pre>
       <tr><td>What is <code>Hub</code>?</td><td>In-memory connection + room registry in one process.</td></tr>
       <tr><td>Goroutines per user?</td><td>~2 (read + write pump) while connected.</td></tr>
       <tr><td>Can polling upgrade to WebSocket?</td><td>Yes (v0.4.0) — same <code>sid</code>, transport swap, pumps keep running.</td></tr>
+      <tr><td>What survives a dropped connection?</td><td>With <code>SessionRecovery</code> on: the session, its room membership, and every event in the replay buffer (v0.5.0). Per process only.</td></tr>
       <tr><td>Ready for multi-region out of the box?</td><td>No — you need sticky sessions + external pub/sub for that.</td></tr>
     </tbody>
   </table>

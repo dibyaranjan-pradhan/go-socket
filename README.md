@@ -66,6 +66,15 @@ JSON-over-WebSocket server for Go, built on [gorilla/websocket](https://github.c
    mux.Handle("/engine.io/", s.EngineIOHandler())
   ```
    See **[docs/UPGRADE.md](./docs/UPGRADE.md)** for probe/upgrade sequence and `make autobahn`.
+10. **Session recovery + backpressure (v0.5.0)** — opt-in: sequence numbers, replay on reconnect, per-emit drop/volatile/disconnect, idempotency keys:
+  ```go
+   s := gosocket.New(gosocket.Config{
+       SessionRecovery: gosocket.SessionRecoveryConfig{Enabled: true},
+   })
+   // client reconnects with ?gs_session=<id>&gs_seq=<last seq seen>
+   _ = ctx.EmitWith("cursor", pos, gosocket.EmitOptions{Policy: gosocket.BackpressureVolatile})
+  ```
+   See **[docs/RECOVERY.md](./docs/RECOVERY.md)** for the wire contract, client algorithm, and memory bounds.
 
 ## Repository layout
 
@@ -85,6 +94,7 @@ JSON-over-WebSocket server for Go, built on [gorilla/websocket](https://github.c
 - **[docs/EVENTS.md](./docs/EVENTS.md)** — synthetic and optional preset event names  
 - **[docs/ENGINEIO.md](./docs/ENGINEIO.md)** — Engine.IO v4 HTTP long-polling (`EngineIOHandler`)  
 - **[docs/UPGRADE.md](./docs/UPGRADE.md)** — polling→WebSocket upgrade, `NativeWebSocket`, Autobahn  
+- **[docs/RECOVERY.md](./docs/RECOVERY.md)** — session resume, replay, backpressure, idempotency  
 - **[docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)** — internals for contributors  
 - **[docs/TESTING.md](./docs/TESTING.md)** — coverage goals and test plan
 

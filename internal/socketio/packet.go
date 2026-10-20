@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Dibyaranjan Pradhan. All rights reserved.
+
 // Package socketio implements Socket.IO v5 packet types and their text codec.
 //
 // A Socket.IO packet rides inside an Engine.IO Message packet. Its text form is:
