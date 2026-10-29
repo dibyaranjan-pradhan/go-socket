@@ -10,7 +10,7 @@ While the version is `0.x`, minor releases may include documented breaking chang
 
 _Nothing yet._
 
-## [0.5.0](https://github.com/dibyaranjan-pradhan/go-socket/releases/tag/v0.5.0) - 2026-10-20
+## [0.5.0](https://github.com/dibyaranjan-pradhan/go-socket/releases/tag/v0.5.0) - 2026-10-29
 
 M4 — session resume and connection-state recovery, per-emit backpressure policy, idempotency keys.
 
