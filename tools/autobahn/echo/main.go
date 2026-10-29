@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Dibyaranjan Pradhan. All rights reserved.
+
 // Command echo runs a minimal RFC 6455 echo server for Autobahn Testsuite runs.
 // It uses the in-tree codec directly so fuzz results reflect native WebSocket code.
 package main

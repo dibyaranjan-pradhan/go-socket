@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Dibyaranjan Pradhan. All rights reserved.
+
 package gosocket
 
 import (
@@ -36,6 +38,8 @@ type Server struct {
 	totalConnectionsEver atomic.Int64
 	serverStart          time.Time
 	onHeartbeatTimeout   []func(*Context)
+	onSessionExpire      []func(SessionInfo)
+	sessions             *internal.SessionStore // nil unless Config.SessionRecovery.Enabled
 	wsUpgrader           internal.TransportUpgrader
 	engineIO             *internal.EngineIOHandler
 	diag                 Logger
@@ -70,6 +74,10 @@ func New(cfg Config) *Server {
 		func() bool { return s.closed.Load() },
 	)
 	go hub.Run(hCtx)
+	if cfg.SessionRecovery.Enabled {
+		s.sessions = s.newSessionStore()
+		go s.sessions.Run(hCtx)
+	}
 	return s
 }
 
@@ -148,12 +156,22 @@ func (s *Server) GetConnectionStats(clientID string) *ConnectionStats {
 
 // GetServerStats returns aggregate metrics for the server.
 func (s *Server) GetServerStats() *ServerStats {
-	return &ServerStats{
+	st := &ServerStats{
 		ActiveConnections:      s.conns.Load(),
 		TotalConnectionsEver:   s.totalConnectionsEver.Load(),
 		TotalMessagesProcessed: s.totalMessages.Load(),
+		HubEmitsDropped:        s.hub.EmitsDropped(),
 		UptimeSince:            s.serverStart,
 	}
+	if s.sessions != nil {
+		ss := s.sessions.Stats()
+		st.Sessions = int64(ss.Sessions)
+		st.SessionsParked = int64(ss.Parked)
+		st.SessionsResumed = ss.Resumed
+		st.MessagesReplayed = ss.Replayed
+		st.DuplicatesSuppressed = ss.Duplicates
+	}
+	return st
 }
 
 // GetRoomStats returns metrics for a specific room.
@@ -196,8 +214,14 @@ func (s *Server) ListAllRooms() []*RoomStats {
 
 func (s *Server) buildConnectionStats(ic *internal.Client) *ConnectionStats {
 	st := ic.GetStats()
+	sid := ""
+	if sess := ic.Session(); sess != nil {
+		sid = sess.ID()
+	}
 	return &ConnectionStats{
 		ClientID:          ic.ID(),
+		MessagesDropped:   st.MessagesDropped,
+		SessionID:         sid,
 		BytesSent:         st.BytesSent,
 		BytesReceived:     st.BytesReceived,
 		MessagesSent:      st.MessagesSent,
@@ -381,6 +405,10 @@ func (s *Server) serveTransport(transport internal.Transport, r *http.Request) {
 	s.clientsByID.Store(id, ic)
 	s.totalConnectionsEver.Add(1)
 
+	if s.sessions != nil {
+		s.openSession(ic, r)
+	}
+
 	go ic.WritePump()
 	s.mu.RLock()
 	cbs := make([]func(*Context), len(s.onConnect))
@@ -457,6 +485,12 @@ func (s *Server) dispatch(ic *internal.Client, r *http.Request, raw []byte) {
 	if err := json.Unmarshal(raw, &msg); err != nil {
 		return
 	}
+	sess := ic.Session()
+	if sess != nil && msg.Event == EventAck {
+		// Control traffic: bypasses middleware so rate limits cannot starve acks.
+		s.handleAck(sess, msg.Payload)
+		return
+	}
 	s.totalMessages.Add(1)
 	ctx := s.newContext(ic, r, msg.Event, msg.Payload, msg.Room, msg.ID)
 
@@ -465,6 +499,11 @@ func (s *Server) dispatch(ic *internal.Client, r *http.Request, raw []byte) {
 			return
 		}
 		if msg.Event == "" {
+			return
+		}
+		// Claimed after middleware so a rate-limited or rejected attempt can be retried with the same key.
+		if sess != nil && msg.IdempotencyKey != "" && !sess.ClaimKey(msg.IdempotencyKey) {
+			s.sessions.NoteDuplicate()
 			return
 		}
 		s.mu.RLock()
@@ -516,27 +555,27 @@ func (s *Server) withRecover(fn func() error) (err error) {
 	return fn()
 }
 
-func (s *Server) emitOne(ic *internal.Client, event string, data interface{}, ack string) error {
+func (s *Server) emitOne(ic *internal.Client, event string, data interface{}, ack string, opts EmitOptions) error {
 	if ic == nil {
 		return nil
 	}
-	msg := ServerWireMessage{Event: event, Payload: data, AckID: ack}
+	msg := ServerWireMessage{Event: event, Payload: data, AckID: ack, IdempotencyKey: opts.IdempotencyKey}
 	b, err := json.Marshal(msg)
 	if err != nil {
 		return err
 	}
-	if !ic.TrySend(b) {
+	if !ic.TrySendPolicy(b, s.resolvePolicy(opts.Policy)) {
 		s.diag.Printf("gosocket: [WARN] emit queue full: clientID=%s roomID=- event=%s", ic.ID(), event)
-		go ic.Shutdown()
+		go ic.ShutdownResumable()
 	}
 	return nil
 }
 
-func (s *Server) emitRoom(room, event string, data interface{}, ack string, exclude *internal.Client) error {
+func (s *Server) emitRoom(room, event string, data interface{}, ack string, exclude *internal.Client, opts EmitOptions) error {
 	if room == "" {
 		return nil
 	}
-	msg := ServerWireMessage{Event: event, Payload: data, AckID: ack}
+	msg := ServerWireMessage{Event: event, Payload: data, AckID: ack, IdempotencyKey: opts.IdempotencyKey}
 	b, err := json.Marshal(msg)
 	if err != nil {
 		return err
@@ -546,6 +585,7 @@ func (s *Server) emitRoom(room, event string, data interface{}, ack string, excl
 		Event:   internal.WireEvent(event),
 		Exclude: exclude,
 		Data:    b,
+		Policy:  s.resolvePolicy(opts.Policy),
 	})
 	return nil
 }

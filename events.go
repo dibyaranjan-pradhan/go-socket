@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Dibyaranjan Pradhan. All rights reserved.
+
 package gosocket
 
 // Optional wire event names for apps that want shared constants instead of string literals.

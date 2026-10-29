@@ -44,6 +44,13 @@ Example:
 - **payload** — JSON-encoded value you passed (object, array, string, etc.).
 - **ackId** — present only when replying to a client frame that had `id`.
 
+Optional fields (only when session recovery is enabled; see [RECOVERY.md](RECOVERY.md)):
+
+- **seq** — per-session sequence number on reliable events.
+- **idempotencyKey** — echo of `EmitOptions.IdempotencyKey`.
+
+Client → server may also carry `idempotencyKey`. Control events: server sends `$session` first on every recovery-enabled connection; client may send `$ack` with `{"seq":N}`.
+
 ## Ack behaviour
 
 1. Client sends an inbound message with `"id": "req-1"`.

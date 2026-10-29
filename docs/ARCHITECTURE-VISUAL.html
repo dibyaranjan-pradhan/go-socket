@@ -433,6 +433,7 @@
                 <a href="#polling-flow">Polling Flow</a>
                 <a href="#upgrade-flow">Upgrade Flow (M3)</a>
                 <a href="#native-ws">Native WebSocket</a>
+                <a href="#recovery">Session Recovery (M4)</a>
                 <a href="#key-concepts">Key Concepts</a>
                 <a href="#data-flow">Data Flow</a>
                 <a href="#patterns">Design Patterns</a>
@@ -799,6 +800,89 @@ Upgrade: websocket</code></pre>
                 </div>
             </div>
             <p style="margin-top: 1rem;">Direct <code>Handler()</code> WebSocket still carries plain go-socket JSON. Only the Engine.IO mount wraps payloads in Engine.IO packet prefixes.</p>
+        </section>
+
+        <section id="recovery">
+            <h2>Session Recovery (M4 — v0.5.0)</h2>
+            <p>
+                <strong>What:</strong> A dropped connection no longer loses data. The server numbers every outbound event, keeps a bounded replay buffer, and a reconnecting client resumes from the last event it saw.
+                <strong>Why:</strong> Mobile and IoT links drop constantly; without this each drop loses in-flight events and forces a full re-sync.
+                <strong>Where:</strong> <code>internal/session.go</code> (Session + SessionStore), <code>internal/client.go</code> (send path, pre-queue replay), <code>internal/hub.go</code> (<code>Transfer</code>), <code>recovery.go</code> (public API).
+                <strong>How to enable:</strong> <code>Config{SessionRecovery: SessionRecoveryConfig{Enabled: true}}</code> — off by default, wire unchanged when off.
+            </p>
+
+            <div class="card card-recessed">
+                <h3><span class="step-number">1</span> Connect: <code>$session</code> frame</h3>
+                <p>Every recovery-enabled connection gets a session token. The first frame is a control frame (never replayed):</p>
+                <pre><code>{"event":"$session","payload":{"sessionId":"9f2c…","resumed":false,"replayed":0,"lastSeq":0}}</code></pre>
+            </div>
+
+            <div class="flow-arrow">↓</div>
+
+            <div class="card card-recessed">
+                <h3><span class="step-number">2</span> Stream: per-session <code>seq</code></h3>
+                <p>
+                    Each reliable event gets the next sequence number and is copied into the session's bounded buffer.
+                    <strong>Why under one lock:</strong> seq assignment and queueing happen together, so seq order equals wire order and the client sees no gaps.
+                </p>
+                <pre><code>{"seq":7,"event":"tick","payload":42}</code></pre>
+            </div>
+
+            <div class="flow-arrow">↓</div>
+
+            <div class="card card-recessed">
+                <h3><span class="step-number">3</span> Drop: session is parked, rooms keep buffering</h3>
+                <p>
+                    The dead <code>Client</code> stays registered in the hub as a hidden member (not counted by <code>RoomSize</code>), so room broadcasts keep landing in the buffer until <code>SessionTTL</code> expires.
+                    A server-initiated <code>ctx.Disconnect()</code> ends the session instead, so a kicked peer cannot resume.
+                </p>
+            </div>
+
+            <div class="flow-arrow">↓</div>
+
+            <div class="card card-recessed">
+                <h3><span class="step-number">4</span> Resume: replay the gap</h3>
+                <p>The client reconnects with its last seen seq (query string or headers; works on the WebSocket URL and the Engine.IO handshake):</p>
+                <pre><code>GET /ws?gs_session=9f2c…&amp;gs_seq=7</code></pre>
+                <p>
+                    After authentication the server rebinds the session, moves room membership with <code>Hub.Transfer</code>, and queues <code>$session</code> then every event with seq &gt; 7 in a pre-queue that <code>WritePump</code> drains before any live frame.
+                </p>
+            </div>
+
+            <div class="flow-arrow">↓</div>
+
+            <div class="card card-hero">
+                <h3><span class="badge badge-success">✓ Lossless within the window, honest outside it</span></h3>
+                <p>If the gap is larger than the buffer, the session expired, or the owner does not match, the client gets <code>resumed:false</code> plus a <code>reason</code> and a fresh session — never silent partial state.</p>
+            </div>
+
+            <h3 style="margin-top: 2rem;">Backpressure policy (per emit)</h3>
+            <div class="grid grid-3">
+                <div class="card">
+                    <h4><code>Disconnect</code> (default)</h4>
+                    <p>Queue full → drop the slow peer. With recovery the event is buffered first, so the peer reconnects and replays it.</p>
+                </div>
+                <div class="card">
+                    <h4><code>Drop</code></h4>
+                    <p>Queue full → discard this event, keep the connection. Queued events are sequenced and replayable.</p>
+                </div>
+                <div class="card">
+                    <h4><code>Volatile</code></h4>
+                    <p>Best effort. Never sequenced, never buffered, never replayed. For cursors and telemetry where stale data is worthless.</p>
+                </div>
+            </div>
+
+            <h3 style="margin-top: 2rem;">Idempotency keys</h3>
+            <div class="card">
+                <p>
+                    A client that retries after a reconnect sends the same <code>idempotencyKey</code>; the handler runs once per key per session window, and the first attempt's response arrives through replay.
+                    Keys are claimed after middleware, so a rate-limited attempt can be retried. Outbound keys (<code>EmitOptions.IdempotencyKey</code>) are echoed so clients can dedupe too.
+                </p>
+            </div>
+
+            <div class="highlight-box" style="margin-top: 1.5rem;">
+                <strong>Memory is bounded:</strong> per session by message count and bytes; overall by <code>(live + MaxParkedSessions) × ReplayBufferBytes</code>. Broadcast events share one backing array across sessions. State is per process; cross-node resume arrives with the Redis/NATS adapters. Full reference: <code>docs/RECOVERY.md</code>.
+            </div>
         </section>
 
         <section id="key-concepts">

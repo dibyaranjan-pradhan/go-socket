@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Dibyaranjan Pradhan. All rights reserved.
+
 package internal
 
 // WireEvent is the application event name on an EmitJob (logging and correlation).

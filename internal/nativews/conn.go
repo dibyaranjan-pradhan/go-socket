@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Dibyaranjan Pradhan. All rights reserved.
+
 // Package nativews is go-socket's alpha server-side WebSocket codec (RFC 6455).
 // It exists so the library can drop gorilla/websocket once Autobahn coverage is green.
 package nativews

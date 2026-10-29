@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Dibyaranjan Pradhan. All rights reserved.
+
 // Package engineio implements Engine.IO v4 packet types and their text codec.
 //
 // Engine.IO is the framing layer that Socket.IO rides on. Every packet starts

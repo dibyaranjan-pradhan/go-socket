@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Dibyaranjan Pradhan. All rights reserved.
+
 package gosocket
 
 import (
@@ -44,17 +46,32 @@ func (ctx *Context) Bind(v interface{}) error {
 
 // Emit sends an event to this connection. The first emit after an inbound message with id includes ackId.
 func (ctx *Context) Emit(event string, data interface{}) error {
-	return ctx.server.emitOne(ctx.client, event, data, ctx.consumeAck())
+	return ctx.server.emitOne(ctx.client, event, data, ctx.consumeAck(), EmitOptions{})
+}
+
+// EmitWith is Emit with a per-call backpressure policy and optional idempotency key.
+func (ctx *Context) EmitWith(event string, data interface{}, opts EmitOptions) error {
+	return ctx.server.emitOne(ctx.client, event, data, ctx.consumeAck(), opts)
 }
 
 // EmitToRoom sends an event to every client in room, including the caller when joined.
 func (ctx *Context) EmitToRoom(room, event string, data interface{}) error {
-	return ctx.server.emitRoom(room, event, data, ctx.consumeAck(), nil)
+	return ctx.server.emitRoom(room, event, data, ctx.consumeAck(), nil, EmitOptions{})
+}
+
+// EmitToRoomWith is EmitToRoom with per-call options.
+func (ctx *Context) EmitToRoomWith(room, event string, data interface{}, opts EmitOptions) error {
+	return ctx.server.emitRoom(room, event, data, ctx.consumeAck(), nil, opts)
 }
 
 // BroadcastToRoom sends an event to every client in room except this connection.
 func (ctx *Context) BroadcastToRoom(room, event string, data interface{}) error {
-	return ctx.server.emitRoom(room, event, data, ctx.consumeAck(), ctx.client)
+	return ctx.server.emitRoom(room, event, data, ctx.consumeAck(), ctx.client, EmitOptions{})
+}
+
+// BroadcastToRoomWith is BroadcastToRoom with per-call options.
+func (ctx *Context) BroadcastToRoomWith(room, event string, data interface{}, opts EmitOptions) error {
+	return ctx.server.emitRoom(room, event, data, ctx.consumeAck(), ctx.client, opts)
 }
 
 // JoinRoom registers this client with a room for targeted delivery.
@@ -102,7 +119,26 @@ func (ctx *Context) ClientID() string {
 	return ctx.client.ID()
 }
 
-// Disconnect closes the underlying WebSocket.
+// SessionID returns the recovery session token ("" when recovery is off, or inside
+// connect middleware, which runs before the session is bound). It is a bearer secret.
+func (ctx *Context) SessionID() string {
+	if ctx.client == nil {
+		return ""
+	}
+	if sess := ctx.client.Session(); sess != nil {
+		return sess.ID()
+	}
+	return ""
+}
+
+// Resumed reports whether this connection continued a previous session. Use it in
+// OnConnect to skip work already done (welcome message, initial snapshot).
+func (ctx *Context) Resumed() bool {
+	return ctx.client != nil && ctx.client.Resumed()
+}
+
+// Disconnect closes the underlying WebSocket. With session recovery the session is
+// terminated as well, so a kicked peer cannot resume.
 func (ctx *Context) Disconnect() {
 	if ctx.client == nil {
 		return

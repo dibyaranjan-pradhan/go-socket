@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Dibyaranjan Pradhan. All rights reserved.
+
 package gosocket
 
 import "time"
@@ -14,6 +16,11 @@ type ConnectionStats struct {
 	MessagesSent int64
 	// MessagesReceived is the count of events received from the client.
 	MessagesReceived int64
+	// MessagesDropped counts events discarded by drop/volatile backpressure.
+	MessagesDropped int64
+	// SessionID is the recovery session token; empty when recovery is disabled.
+	// Treat as a secret: it authorizes a resume.
+	SessionID string
 	// BufferUtilization is the percentage of the write buffer in use (0.0 to 1.0).
 	// Values approaching 1.0 indicate the client is slow.
 	BufferUtilization float32
@@ -33,6 +40,18 @@ type ServerStats struct {
 	TotalConnectionsEver int64
 	// TotalMessagesProcessed is cumulative events handled since server start.
 	TotalMessagesProcessed int64
+	// HubEmitsDropped counts broadcasts lost to a saturated hub queue (raise HubEmitBufferSize).
+	HubEmitsDropped int64
+	// Sessions is the number of recovery sessions held (live + parked); zero when disabled.
+	Sessions int64
+	// SessionsParked is the number of disconnected sessions awaiting resume.
+	SessionsParked int64
+	// SessionsResumed is the cumulative count of successful resumes.
+	SessionsResumed int64
+	// MessagesReplayed is the cumulative count of frames re-sent on resume.
+	MessagesReplayed int64
+	// DuplicatesSuppressed is the cumulative count of inbound events skipped by idempotency keys.
+	DuplicatesSuppressed int64
 	// UptimeSince is when the server started.
 	UptimeSince time.Time
 }

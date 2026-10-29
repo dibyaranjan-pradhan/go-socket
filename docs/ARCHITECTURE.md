@@ -33,6 +33,7 @@ Transport (WebSocket or polling)         ← the actual byte pipe
 | `internal/nativews` | Alpha server-side WebSocket codec (RFC 6455) for Autobahn and future gorilla removal. |
 | `internal/engineio_handler.go`, `internal/poll_manager.go` | Engine.IO HTTP: polling handshake, long-poll GET, POST send, and WebSocket upgrade on existing sessions. |
 | `internal/session_transport.go`, `internal/eio_ws_transport.go` | Swappable transport wrapper and Engine.IO framing over WebSocket after upgrade. |
+| `internal/session.go` | Recovery sessions: seq counter, bounded replay buffer, idempotency window, park/resume/TTL store. Opt-in; see [RECOVERY.md](RECOVERY.md). |
 | `internal/hub.go`, `internal/client.go` | The connection hub (rooms, fan-out) and the per-connection read/write loops. The client talks to the socket **only** through `Transport`. |
 
 ## Why the Transport seam matters
@@ -45,6 +46,18 @@ Transport (WebSocket or polling)         ← the actual byte pipe
 2. **Room to grow.** Polling and WebSocket implement the same interface.
    `sessionTransport` lets an Engine.IO session move from polling to WebSocket
    without restarting pumps. See [UPGRADE.md](UPGRADE.md).
+
+## Why a Session sits beside the Client
+
+A `Client` is one transport and dies with it; the hub keys rooms by `*Client`.
+Recovery therefore adds a `Session` that owns what must outlive a socket (seq
+counter, replay buffer, idempotency keys) and keeps the dropped `Client` registered
+in the hub as a hidden "parked" member, so room broadcasts keep landing in the
+buffer. On resume the hub moves room membership to the new client in one step
+(`Hub.Transfer`, processed inside the hub loop, so no emit sees a half-moved
+state). Sequence assignment and queueing happen under one session lock, which is
+what makes seq order equal wire order. Replay and the `$session` frame travel in a
+pre-queue that `WritePump` drains before the live channel.
 
 ## Packet codecs in one line each
 

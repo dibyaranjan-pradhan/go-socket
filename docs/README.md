@@ -6,6 +6,7 @@ This folder holds deeper references and planning:
 
 | Document | Contents |
 |----------|----------|
+| [ROADMAP.md](./ROADMAP.md) | 12-month plan (M1–M12), principles, launch gate, issue links |
 | [WIRE_PROTOCOL.md](./WIRE_PROTOCOL.md) | Client ↔ server JSON, acks, rooms |
 | [MIDDLEWARE.md](./MIDDLEWARE.md) | Recover, rate limit, custom `MiddlewareFunc` |
 | [EVENTS.md](./EVENTS.md) | Synthetic lifecycle events and optional `Preset*` chat constants |
@@ -13,6 +14,9 @@ This folder holds deeper references and planning:
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | Internals: layers, packet codecs, the `Transport` seam (for contributors) |
 | [ENGINEIO.md](./ENGINEIO.md) | Engine.IO v4 HTTP long-polling: mount `EngineIOHandler()`, client flow |
 | [UPGRADE.md](./UPGRADE.md) | Polling→WebSocket upgrade, `NativeWebSocket`, Autobahn harness |
+| [RECOVERY.md](./RECOVERY.md) | Session resume, replay buffer, backpressure policies, idempotency keys |
+
+**v0.5.0 (library):** opt-in **session recovery** (`Config.SessionRecovery`): sequence numbers, bounded replay, resume handshake, per-emit backpressure policy, idempotency keys. See [RECOVERY.md](./RECOVERY.md).
 
 **v0.4.0 (library):** Engine.IO **transport upgrade** (probe → upgrade → WebSocket on same `sid`); **`Config.NativeWebSocket`** for alpha RFC 6455 codec; **`make autobahn`**. See [UPGRADE.md](./UPGRADE.md).
 

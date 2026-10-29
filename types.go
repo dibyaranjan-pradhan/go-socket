@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Dibyaranjan Pradhan. All rights reserved.
+
 // Package gosocket provides a small JSON-over-WebSocket server built on gorilla/websocket.
 package gosocket
 
@@ -71,6 +73,12 @@ type Config struct {
 	// NativeWebSocket enables the in-tree RFC 6455 WebSocket codec (alpha) instead of
 	// gorilla/websocket. Gorilla remains the default production path.
 	NativeWebSocket bool
+	// SessionRecovery opts in to sequence numbers, replay on reconnect, and
+	// idempotent inbound delivery. See SessionRecoveryConfig.
+	SessionRecovery SessionRecoveryConfig
+	// DefaultBackpressure applies to emits that do not set EmitOptions.Policy.
+	// Zero keeps the historical behaviour: disconnect a peer whose queue is full.
+	DefaultBackpressure BackpressurePolicy
 }
 
 func (c *Config) normalized() Config {
@@ -98,6 +106,24 @@ func (c *Config) normalized() Config {
 	}
 	if out.HubEmitBufferSize <= 0 {
 		out.HubEmitBufferSize = DefaultHubEmitBufferSize
+	}
+	if out.SessionRecovery.Enabled {
+		rc := &out.SessionRecovery
+		if rc.ReplayBufferMessages <= 0 {
+			rc.ReplayBufferMessages = DefaultReplayBufferMessages
+		}
+		if rc.ReplayBufferBytes <= 0 {
+			rc.ReplayBufferBytes = DefaultReplayBufferBytes
+		}
+		if rc.SessionTTL <= 0 {
+			rc.SessionTTL = DefaultSessionTTL
+		}
+		if rc.MaxParkedSessions <= 0 {
+			rc.MaxParkedSessions = DefaultMaxParkedSessions
+		}
+		if rc.IdempotencyWindow <= 0 {
+			rc.IdempotencyWindow = DefaultIdempotencyWindow
+		}
 	}
 	return out
 }
@@ -129,6 +155,9 @@ type ClientWireMessage struct {
 	Payload json.RawMessage `json:"payload"`
 	// ID optionally correlates a single ack-bearing server response (ackId).
 	ID string `json:"id,omitempty"`
+	// IdempotencyKey lets a retrying client avoid double execution. With session
+	// recovery enabled the server runs the handler once per key per session window.
+	IdempotencyKey string `json:"idempotencyKey,omitempty"`
 }
 
 // ServerWireMessage is the JSON shape the server sends to clients.
@@ -139,4 +168,9 @@ type ServerWireMessage struct {
 	Payload interface{} `json:"payload"`
 	// AckID is set when replying to a client-provided id.
 	AckID string `json:"ackId,omitempty"`
+	// Seq is the per-session sequence number (session recovery only). Spliced in at
+	// send time, so Go senders never set it; it exists for Go-side decoding.
+	Seq uint64 `json:"seq,omitempty"`
+	// IdempotencyKey echoes EmitOptions.IdempotencyKey for client-side dedupe.
+	IdempotencyKey string `json:"idempotencyKey,omitempty"`
 }

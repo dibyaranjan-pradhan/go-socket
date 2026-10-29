@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Dibyaranjan Pradhan. All rights reserved.
+
 package internal
 
 import "time"
@@ -8,6 +10,7 @@ type ClientStats struct {
 	BytesReceived     int64
 	MessagesSent      int64
 	MessagesReceived  int64
+	MessagesDropped   int64
 	BufferUtilization float32
 	ConnectedAt       time.Time
 	LastActivity      time.Time
