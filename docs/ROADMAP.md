@@ -14,8 +14,9 @@ Each milestone ships only when its **exit criteria** are green.
 | M1 — Packets & transport seam | [v0.2.0](https://github.com/dibyaranjan-pradhan/go-socket/releases/tag/v0.2.0) | #2 | **Shipped** |
 | M2 — Engine.IO core + polling | [v0.3.0](https://github.com/dibyaranjan-pradhan/go-socket/releases/tag/v0.3.0) | #3 | **Shipped** |
 | M3 — Upgrade + native WS (alpha) | [v0.4.0](https://github.com/dibyaranjan-pradhan/go-socket/releases/tag/v0.4.0) | #4 | **Shipped** |
-| M4 — Session resume / recovery | v0.5.0 | [#5](https://github.com/dibyaranjan-pradhan/go-socket/issues/5) | **Implemented** (pending release) |
-| M5–M12 | v0.6.0 … v1.0.0 | [#6–#13](https://github.com/dibyaranjan-pradhan/go-socket/issues) | Planned |
+| M4 — Session resume / recovery | v0.5.0 | [#5](https://github.com/dibyaranjan-pradhan/go-socket/issues/5) | **Released** |
+| M5 — Socket.IO semantics | v0.6.0 | [#6](https://github.com/dibyaranjan-pradhan/go-socket/issues/6) | **Implemented** (pending release) |
+| M6–M12 | v0.7.0 … v1.0.0 | [#7–#13](https://github.com/dibyaranjan-pradhan/go-socket/issues) | Planned |
 
 Details per release: [CHANGELOG.md](../CHANGELOG.md).
 

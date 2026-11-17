@@ -76,6 +76,9 @@ type Config struct {
 	// SessionRecovery opts in to sequence numbers, replay on reconnect, and
 	// idempotent inbound delivery. See SessionRecoveryConfig.
 	SessionRecovery SessionRecoveryConfig
+
+	// SocketIO tunes the Socket.IO dialect served by Server.SocketIOHandler.
+	SocketIO SocketIOConfig
 	// DefaultBackpressure applies to emits that do not set EmitOptions.Policy.
 	// Zero keeps the historical behaviour: disconnect a peer whose queue is full.
 	DefaultBackpressure BackpressurePolicy
@@ -106,6 +109,15 @@ func (c *Config) normalized() Config {
 	}
 	if out.HubEmitBufferSize <= 0 {
 		out.HubEmitBufferSize = DefaultHubEmitBufferSize
+	}
+	if out.SocketIO.ConnectTimeout <= 0 {
+		out.SocketIO.ConnectTimeout = DefaultSocketIOConnectTimeout
+	}
+	if out.SocketIO.AckTimeout <= 0 {
+		out.SocketIO.AckTimeout = DefaultAckTimeout
+	}
+	if out.SocketIO.MaxPendingAcks <= 0 {
+		out.SocketIO.MaxPendingAcks = DefaultMaxPendingAcks
 	}
 	if out.SessionRecovery.Enabled {
 		rc := &out.SessionRecovery

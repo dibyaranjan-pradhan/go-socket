@@ -41,6 +41,7 @@ type Client struct {
 	replay   [][]byte
 	parked   atomic.Bool
 	resumed  atomic.Bool
+	dialect  atomic.Uint32
 	noResume atomic.Bool
 	dropped  atomic.Int64
 
@@ -56,6 +57,17 @@ type Client struct {
 	lastActivity  atomic.Value // time.Time
 	missedPongs   atomic.Int32
 }
+
+// Dialect is the application protocol a connection speaks on top of its transport.
+// The hub uses it to pick the right pre-encoded frame per recipient.
+type Dialect uint32
+
+const (
+	// DialectLegacy is go-socket's own {event,payload,...} JSON wire format.
+	DialectLegacy Dialect = iota
+	// DialectSocketIO is the Socket.IO v5 packet format inside Engine.IO messages.
+	DialectSocketIO
+)
 
 // ClientOptions configures a new Client.
 type ClientOptions struct {
@@ -188,6 +200,21 @@ func (c *Client) Shutdown() {
 	c.closeRaw()
 }
 
+// flushLinger is how long ShutdownAfterFlush waits for the peer to hang up before
+// the transport is force-closed.
+const flushLinger = time.Second
+
+// ShutdownAfterFlush is a terminal close that first lets already-queued frames reach
+// the peer (e.g. a Socket.IO DISCONNECT), then force-closes after flushLinger if the
+// peer does not hang up on its own.
+func (c *Client) ShutdownAfterFlush() {
+	c.noResume.Store(true)
+	c.shutdownOnce.Do(func() {
+		close(c.send)
+		time.AfterFunc(flushLinger, func() { _ = c.transport.Close() })
+	})
+}
+
 // ShutdownResumable closes the transport but leaves the session resumable. Used
 // for slow-consumer disconnects, where the point is that the peer reconnects and replays.
 func (c *Client) ShutdownResumable() {
@@ -200,6 +227,12 @@ func (c *Client) closeRaw() {
 		close(c.send)
 	})
 }
+
+// Dialect returns the wire dialect of this connection (legacy unless set).
+func (c *Client) Dialect() Dialect { return Dialect(c.dialect.Load()) }
+
+// SetDialect marks the connection's wire dialect; call before the pumps start.
+func (c *Client) SetDialect(d Dialect) { c.dialect.Store(uint32(d)) }
 
 // Session returns the bound recovery session, or nil when recovery is off.
 func (c *Client) Session() *Session { return c.session.Load() }

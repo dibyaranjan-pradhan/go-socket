@@ -15,6 +15,10 @@ This folder holds deeper references and planning:
 | [ENGINEIO.md](./ENGINEIO.md) | Engine.IO v4 HTTP long-polling: mount `EngineIOHandler()`, client flow |
 | [UPGRADE.md](./UPGRADE.md) | Polling→WebSocket upgrade, `NativeWebSocket`, Autobahn harness |
 | [RECOVERY.md](./RECOVERY.md) | Session resume, replay buffer, backpressure policies, idempotency keys |
+| [SOCKETIO.md](./SOCKETIO.md) | Socket.IO v5: `SocketIOHandler()`, namespaces, auth, acks, broadcast algebra |
+| [COMPATIBILITY.md](./COMPATIBILITY.md) | Legacy JSON ↔ Socket.IO mapping, support policy, migration order |
+
+**v0.6.0 (library):** **Socket.IO semantics** via a new `Server.SocketIOHandler()` mount: namespaces (`Of`), auth + `CONNECT_ERROR`, acks in both directions, `To/In/Except` broadcast algebra. Legacy mounts unchanged. See [SOCKETIO.md](./SOCKETIO.md) and [COMPATIBILITY.md](./COMPATIBILITY.md).
 
 **v0.5.0 (library):** opt-in **session recovery** (`Config.SessionRecovery`): sequence numbers, bounded replay, resume handshake, per-emit backpressure policy, idempotency keys. See [RECOVERY.md](./RECOVERY.md).
 

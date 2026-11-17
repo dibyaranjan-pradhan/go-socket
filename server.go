@@ -43,6 +43,15 @@ type Server struct {
 	wsUpgrader           internal.TransportUpgrader
 	engineIO             *internal.EngineIOHandler
 	diag                 Logger
+
+	// Socket.IO dialect (see socketio.go). sioMounted gates every extra cost on the
+	// legacy path: until SocketIOHandler is called, no Socket.IO frames are built.
+	sioMounted atomic.Bool
+	sioOnce    sync.Once
+	sioHandler *internal.EngineIOHandler
+	nsMu       sync.RWMutex
+	namespaces map[string]*Namespace
+	defaultNS  *Namespace
 }
 
 // New constructs a Server with defaults applied from cfg.
@@ -73,6 +82,8 @@ func New(cfg Config) *Server {
 		s.attachPollTransport,
 		func() bool { return s.closed.Load() },
 	)
+	s.defaultNS = &Namespace{s: s, name: "/", def: true}
+	s.namespaces = map[string]*Namespace{"/": s.defaultNS}
 	go hub.Run(hCtx)
 	if cfg.SessionRecovery.Enabled {
 		s.sessions = s.newSessionStore()
@@ -314,11 +325,15 @@ func (s *Server) ShutdownWithMessage(ctx context.Context, eventName string, payl
 			return err
 		}
 	}
-	s.hub.Emit(internal.EmitJob{
+	job := internal.EmitJob{
 		AllClients: true,
 		Event:      internal.WireEvent(eventName),
 		Data:       b,
-	})
+	}
+	if s.sioMounted.Load() {
+		job.SIOData, _ = encodeSIOEvent("/", nil, eventName, payload)
+	}
+	s.hub.Emit(job)
 
 	time.Sleep(500 * time.Millisecond)
 
@@ -451,7 +466,12 @@ func (s *Server) fireDisconnect(ic *internal.Client, r *http.Request) {
 	disc := make([]func(*Context), len(s.onDisconnect))
 	copy(disc, s.onDisconnect)
 	s.mu.RUnlock()
+	s.runDisconnect(ctx, mws, disc)
+}
 
+// runDisconnect is shared by the legacy and Socket.IO paths. Panics are contained
+// because teardown must always finish.
+func (s *Server) runDisconnect(ctx *Context, mws []Middleware, disc []func(*Context)) {
 	for _, mw := range mws {
 		if isRecoverMiddleware(mw) {
 			continue
@@ -529,6 +549,12 @@ func (s *Server) runMiddlewares(ctx *Context) error {
 	s.mu.RLock()
 	mws := append([]Middleware(nil), s.middlewares...)
 	s.mu.RUnlock()
+	return runMiddlewareChain(ctx, mws)
+}
+
+// runMiddlewareChain skips Recover markers: recovery is applied around the whole
+// pipeline, not as a link in it.
+func runMiddlewareChain(ctx *Context, mws []Middleware) error {
 	for _, mw := range mws {
 		if isRecoverMiddleware(mw) {
 			continue
@@ -572,7 +598,7 @@ func (s *Server) emitOne(ic *internal.Client, event string, data interface{}, ac
 }
 
 func (s *Server) emitRoom(room, event string, data interface{}, ack string, exclude *internal.Client, opts EmitOptions) error {
-	if room == "" {
+	if !validRoom(room) {
 		return nil
 	}
 	msg := ServerWireMessage{Event: event, Payload: data, AckID: ack, IdempotencyKey: opts.IdempotencyKey}
@@ -580,13 +606,19 @@ func (s *Server) emitRoom(room, event string, data interface{}, ack string, excl
 	if err != nil {
 		return err
 	}
-	s.hub.Emit(internal.EmitJob{
+	job := internal.EmitJob{
 		Room:    internal.WireRoom(room),
 		Event:   internal.WireEvent(event),
 		Exclude: exclude,
 		Data:    b,
 		Policy:  s.resolvePolicy(opts.Policy),
-	})
+	}
+	if s.sioMounted.Load() {
+		if job.SIOData, err = encodeSIOEvent("/", nil, event, data); err != nil {
+			return err
+		}
+	}
+	s.hub.Emit(job)
 	return nil
 }
 

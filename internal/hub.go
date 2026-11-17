@@ -5,6 +5,7 @@ package internal
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -68,7 +69,22 @@ type EmitJob struct {
 	Data []byte
 	// Policy decides what happens when a target's queue is full. Zero is PolicyDisconnect.
 	Policy SendPolicy
+
+	// Rooms selects the union of several rooms (hub keys) and takes precedence over Room.
+	Rooms []string
+	// ExceptRooms skips members of any listed room (hub keys), e.g. a socket's own id room.
+	ExceptRooms []string
+	// IncludeLegacy adds every legacy-dialect client to a Rooms selection. It is how a
+	// default-namespace broadcast reaches legacy clients that never joined a Socket.IO room.
+	IncludeLegacy bool
+	// SIOData is the Socket.IO frame for Socket.IO-dialect targets. Nil means such
+	// targets are skipped: legacy JSON must never reach a Socket.IO peer.
+	SIOData []byte
 }
+
+// HiddenRoomPrefix marks hub room keys that are internal bookkeeping (namespaces,
+// socket ids). They never appear in room listings or counts.
+const HiddenRoomPrefix = "\x00"
 
 // NewHub constructs a hub with configurable emit buffer size.
 // Call Run in a dedicated goroutine. log may be nil.
@@ -149,7 +165,14 @@ func (h *Hub) leaveRoom(j roomLeave) {
 func (h *Hub) emitToTargets(e EmitJob) {
 	targets := h.collectTargets(e)
 	for _, c := range targets {
-		if c.TrySendPolicy(e.Data, e.Policy) {
+		data := e.Data
+		if c.Dialect() == DialectSocketIO {
+			data = e.SIOData
+		}
+		if data == nil {
+			continue
+		}
+		if c.TrySendPolicy(data, e.Policy) {
 			continue
 		}
 		h.logEmitQueueFull(e, c)
@@ -165,17 +188,57 @@ func (h *Hub) logEmitQueueFull(e EmitJob, c *Client) {
 	h.log.Printf("go-socket: [WARN] emit queue full: clientID=%s roomID=%s event=%s", c.ID(), e.Room.OrDash(), e.Event.OrDash())
 }
 
+// unionLocked returns the members of every listed room. Callers hold h.mu.
+func (h *Hub) unionLocked(rooms []string) map[*Client]struct{} {
+	set := make(map[*Client]struct{})
+	for _, r := range rooms {
+		for c := range h.rooms[r] {
+			set[c] = struct{}{}
+		}
+	}
+	return set
+}
+
 func (h *Hub) collectTargets(e EmitJob) []*Client {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
+	var excluded map[*Client]struct{}
+	if len(e.ExceptRooms) > 0 {
+		excluded = h.unionLocked(e.ExceptRooms)
+	}
+	skip := func(c *Client) bool {
+		if e.Exclude != nil && c == e.Exclude {
+			return true
+		}
+		_, ok := excluded[c]
+		return ok
+	}
+
 	if e.AllClients {
 		out := make([]*Client, 0, len(h.clients))
 		for c := range h.clients {
-			if e.Exclude != nil && c == e.Exclude {
-				continue
+			if !skip(c) {
+				out = append(out, c)
 			}
-			out = append(out, c)
+		}
+		return out
+	}
+
+	if len(e.Rooms) > 0 {
+		set := h.unionLocked(e.Rooms)
+		if e.IncludeLegacy {
+			for c := range h.clients {
+				if c.Dialect() == DialectLegacy {
+					set[c] = struct{}{}
+				}
+			}
+		}
+		out := make([]*Client, 0, len(set))
+		for c := range set {
+			if !skip(c) {
+				out = append(out, c)
+			}
 		}
 		return out
 	}
@@ -193,10 +256,9 @@ func (h *Hub) collectTargets(e EmitJob) []*Client {
 	}
 	out := make([]*Client, 0, len(m))
 	for c := range m {
-		if e.Exclude != nil && c == e.Exclude {
-			continue
+		if !skip(c) {
+			out = append(out, c)
 		}
-		out = append(out, c)
 	}
 	return out
 }
@@ -365,7 +427,9 @@ func (h *Hub) AllRooms() []string {
 	defer h.mu.RUnlock()
 	rooms := make([]string, 0, len(h.rooms))
 	for room := range h.rooms {
-		rooms = append(rooms, room)
+		if !strings.HasPrefix(room, HiddenRoomPrefix) {
+			rooms = append(rooms, room)
+		}
 	}
 	return rooms
 }
@@ -378,7 +442,10 @@ func (h *Hub) ClientRoomCount(c *Client) int {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	n := 0
-	for _, m := range h.rooms {
+	for room, m := range h.rooms {
+		if strings.HasPrefix(room, HiddenRoomPrefix) {
+			continue
+		}
 		if _, ok := m[c]; ok {
 			n++
 		}

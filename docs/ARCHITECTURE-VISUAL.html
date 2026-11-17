@@ -434,6 +434,7 @@
                 <a href="#upgrade-flow">Upgrade Flow (M3)</a>
                 <a href="#native-ws">Native WebSocket</a>
                 <a href="#recovery">Session Recovery (M4)</a>
+                <a href="#socketio">Socket.IO (M5)</a>
                 <a href="#key-concepts">Key Concepts</a>
                 <a href="#data-flow">Data Flow</a>
                 <a href="#patterns">Design Patterns</a>
@@ -882,6 +883,81 @@ Upgrade: websocket</code></pre>
 
             <div class="highlight-box" style="margin-top: 1.5rem;">
                 <strong>Memory is bounded:</strong> per session by message count and bytes; overall by <code>(live + MaxParkedSessions) × ReplayBufferBytes</code>. Broadcast events share one backing array across sessions. State is per process; cross-node resume arrives with the Redis/NATS adapters. Full reference: <code>docs/RECOVERY.md</code>.
+            </div>
+        </section>
+
+        <section id="socketio">
+            <h2>Socket.IO Semantics (M5 — v0.6.0)</h2>
+            <p>
+                <strong>What:</strong> The official <code>socket.io-client</code> can now connect: namespaces, auth on connect, acks in both directions, and chainable broadcasts (<code>To</code> / <code>In</code> / <code>Except</code>).
+                <strong>Why:</strong> Socket.IO is the de-facto real-time client ecosystem (web, mobile, Unity). Speaking its wire protocol lets those clients use go-socket without a custom client, while existing JSON clients keep working.
+                <strong>Where:</strong> <code>socketio.go</code> (mount, per-connection packet loop, acks), <code>namespace.go</code> (<code>Of</code>, per-namespace registries), <code>broadcast.go</code> (broadcast algebra), <code>internal/hub.go</code> (per-dialect fan-out), <code>internal/engineio_handler.go</code> (direct WebSocket handshake).
+                <strong>How to enable:</strong> <code>mux.Handle("/socket.io/", srv.SocketIOHandler())</code> — a separate mount; <code>Handler()</code> and <code>EngineIOHandler()</code> are untouched.
+            </p>
+
+            <div class="card card-recessed">
+                <h3><span class="step-number">1</span> Why a second mount, not a mode switch</h3>
+                <p>
+                    Legacy clients expect <code>OnConnect</code> the moment the socket opens and plain JSON frames. Socket.IO clients stay silent until they send <code>CONNECT</code> and expect <code>2[...]</code> frames.
+                    Auto-detecting on one mount would defer <code>OnConnect</code> and hang legacy clients; flipping a flag would break them. Two mounts share <strong>one hub, one middleware chain, one set of handlers</strong>, so server code is written once.
+                </p>
+            </div>
+
+            <div class="flow-arrow">↓</div>
+
+            <div class="card card-recessed">
+                <h3><span class="step-number">2</span> Connect, namespaces and auth</h3>
+                <p>One Engine.IO connection multiplexes namespaces. Each <code>CONNECT</code> runs middleware (server-wide first, then the namespace's own) before the socket joins.</p>
+                <pre><code>client → 40/admin,{"token":"abc"}          CONNECT with auth
+server → 40/admin,{"sid":"7c1e…"}           accepted
+server → 44/admin,{"message":"forbidden"}   rejected (CONNECT_ERROR)</code></pre>
+                <p><strong>Security default:</strong> only <code>*ConnectError</code> text reaches the client; any other error becomes a generic <code>"rejected"</code>. A global <code>Use</code> guard also protects every namespace. A connection that never CONNECTs is closed after <code>ConnectTimeout</code>.</p>
+            </div>
+
+            <div class="flow-arrow">↓</div>
+
+            <div class="card card-recessed">
+                <h3><span class="step-number">3</span> Acks are separate packets</h3>
+                <div class="grid grid-2">
+                    <div>
+                        <h4>Client → server</h4>
+                        <pre><code>client → 212["hello","bob"]
+handler: ctx.Ack("hi bob")
+server → 312["hi bob"]</code></pre>
+                    </div>
+                    <div>
+                        <h4>Server → client</h4>
+                        <pre><code>ctx.EmitWithAck("ask", 1, 5s, cb)
+server → 21["ask",1]
+client → 31["yes"]   → cb(args, nil)</code></pre>
+                    </div>
+                </div>
+                <p>Pending server acks live in a per-socket table with a timer each: reply, timeout (<code>ErrAckTimeout</code>) or disconnect (<code>ErrAckDisconnected</code>) resolves it <strong>exactly once</strong>. The table is capped (<code>MaxPendingAcks</code>) so a silent client cannot grow memory.</p>
+            </div>
+
+            <div class="flow-arrow">↓</div>
+
+            <div class="card card-recessed">
+                <h3><span class="step-number">4</span> Broadcast: one encode per dialect</h3>
+                <p>
+                    A broadcast builds two frames once — legacy JSON and Socket.IO — and the hub picks per recipient. Rooms are namespaced (<code>"r1"</code> in <code>/chat</code> ≠ <code>"r1"</code> in <code>/admin</code>); the default namespace uses plain room names so <strong>legacy and Socket.IO clients share rooms</strong> during migration.
+                </p>
+                <pre><code>srv.Of("/chat").To("r1", "r2").Except("r3").Emit("msg", x)
+
+ Emit ──► hub ──┬─ legacy client      ← {"event":"msg","payload":x}
+                └─ Socket.IO client   ← 2/chat,["msg",x]</code></pre>
+                <p><code>Except</code> matches a name as a room <em>and</em> as a socket id. Builders are immutable, so a shared base is goroutine-safe. Internal keys (namespace membership, socket ids) use a NUL prefix: hidden from room listings and unreachable from user-supplied room names.</p>
+            </div>
+
+            <div class="flow-arrow">↓</div>
+
+            <div class="card card-hero">
+                <h3><span class="badge badge-success">✓ Additive, opt-in, no breaking change</span></h3>
+                <p>Before <code>SocketIOHandler()</code> is called no Socket.IO frame is built and legacy output is byte-identical to v0.5.0. Legacy is not decommissioned before 1.0; see <code>docs/COMPATIBILITY.md</code> for the mapping and migration order.</p>
+            </div>
+
+            <div class="highlight-box" style="margin-top: 1.5rem;">
+                <strong>Not in M5:</strong> binary events/acks (M6) and session recovery for Socket.IO clients (legacy only, per process). Conformance is tested in plain Go with a wire-level client built from the Socket.IO v5 spec examples — no Node needed. Full reference: <code>docs/SOCKETIO.md</code>.
             </div>
         </section>
 

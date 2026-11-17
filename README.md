@@ -75,6 +75,16 @@ JSON-over-WebSocket server for Go, built on [gorilla/websocket](https://github.c
    _ = ctx.EmitWith("cursor", pos, gosocket.EmitOptions{Policy: gosocket.BackpressureVolatile})
   ```
    See **[docs/RECOVERY.md](./docs/RECOVERY.md)** for the wire contract, client algorithm, and memory bounds.
+11. **Socket.IO (v0.6.0)** — official `socket.io-client` support: namespaces, auth, acks both ways, broadcast algebra. Separate mount; legacy mounts unchanged, same handlers serve both:
+  ```go
+   mux.Handle("/socket.io/", s.SocketIOHandler())
+   s.Of("/admin").Use(adminAuth)               // ctx.BindAuth reads the client's auth object
+   s.On("chat", func(ctx *gosocket.Context) {
+       _ = ctx.To("lobby").Emit("chat", msg)   // everyone in lobby except the sender
+       _ = ctx.Ack("ok")                       // answer the client's ack callback
+   })
+  ```
+   See **[docs/SOCKETIO.md](./docs/SOCKETIO.md)** and **[docs/COMPATIBILITY.md](./docs/COMPATIBILITY.md)**.
 
 ## Repository layout
 
@@ -95,6 +105,8 @@ JSON-over-WebSocket server for Go, built on [gorilla/websocket](https://github.c
 - **[docs/ENGINEIO.md](./docs/ENGINEIO.md)** — Engine.IO v4 HTTP long-polling (`EngineIOHandler`)  
 - **[docs/UPGRADE.md](./docs/UPGRADE.md)** — polling→WebSocket upgrade, `NativeWebSocket`, Autobahn  
 - **[docs/RECOVERY.md](./docs/RECOVERY.md)** — session resume, replay, backpressure, idempotency  
+- **[docs/SOCKETIO.md](./docs/SOCKETIO.md)** — Socket.IO v5: namespaces, auth, acks, broadcast algebra  
+- **[docs/COMPATIBILITY.md](./docs/COMPATIBILITY.md)** — legacy JSON ↔ Socket.IO mapping and support policy  
 - **[docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)** — internals for contributors  
 - **[docs/TESTING.md](./docs/TESTING.md)** — coverage goals and test plan
 

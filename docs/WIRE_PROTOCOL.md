@@ -66,6 +66,13 @@ If you do not use `id`, omit `ackId` on the client.
 
 Room membership is server-side only; the wire `room` field on client messages does not auto-join — join in `OnConnect` or in an explicit handler.
 
+## Socket.IO clients
+
+The JSON shapes on this page are the **legacy** dialect. Socket.IO clients
+(`SocketIOHandler()`) use Socket.IO v5 packets instead; handlers and rooms are
+shared. See [SOCKETIO.md](./SOCKETIO.md) and the mapping in
+[COMPATIBILITY.md](./COMPATIBILITY.md).
+
 ## Control frames
 
 Ping/pong and WebSocket close frames are handled by the library. On shutdown, the server attempts to send a **normal close** control frame so clients can observe graceful teardown.

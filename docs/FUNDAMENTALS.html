@@ -338,7 +338,20 @@ Your code:   s.On("hello", func(ctx *Context) { ... })</pre>
   <p><strong>How:</strong> first frame on every connection is <code>$session</code> (token + whether it resumed). If a resume is impossible (buffer overrun, expired, wrong owner) you get <code>resumed:false</code> and a fresh session — resync your state.</p>
   <p><strong>Also in M4:</strong> per-emit backpressure policy (<code>Disconnect</code> / <code>Drop</code> / <code>Volatile</code>) and idempotency keys for at-least-once dedupe. Per-process only: multi-node resume needs the later Redis/NATS adapter. Full reference: <code>docs/RECOVERY.md</code>.</p>
 
-  <h2>12. Before public release — honest checklist</h2>
+  <h2>12. Socket.IO (M5 — v0.6.0)</h2>
+  <p><strong>What:</strong> the official <code>socket.io-client</code> can connect. You get namespaces (<code>srv.Of("/admin")</code>), auth in the connect packet, acks in both directions, and <code>To/In/Except</code> broadcasts.</p>
+  <p><strong>Why:</strong> Socket.IO is the widely used real-time client family; speaking its protocol means no custom client for web, mobile or game engines. Legacy JSON clients keep working.</p>
+  <p><strong>Where:</strong> mount <code>srv.SocketIOHandler()</code> at <code>/socket.io/</code> (a second Engine.IO mount; the old mounts are untouched). Code: <code>socketio.go</code>, <code>namespace.go</code>, <code>broadcast.go</code>.</p>
+  <p><strong>How:</strong></p>
+  <ul>
+    <li>Same <code>srv.On</code> / <code>Use</code> / rooms serve both dialects; the hub encodes each broadcast once per dialect.</li>
+    <li>Client <code>auth</code> arrives in <code>CONNECT</code>: read it with <code>ctx.BindAuth</code>; reject with <code>&amp;ConnectError{...}</code> (other errors show as generic <code>rejected</code>).</li>
+    <li>Ack a client event with <code>ctx.Ack(...)</code>; ask the client with <code>ctx.EmitWithAck(..., timeout, cb)</code>.</li>
+    <li>Legacy and Socket.IO clients share rooms of the default namespace, so you can migrate clients one at a time.</li>
+  </ul>
+  <p>Not yet: binary events (M6), session recovery for Socket.IO clients. References: <code>docs/SOCKETIO.md</code>, <code>docs/COMPATIBILITY.md</code>.</p>
+
+  <h2>13. Before public release — honest checklist</h2>
   <div class="card">
     <ul>
       <li>Document the <strong>four actors</strong> (this page) so users know what to mount vs what to call</li>
@@ -350,7 +363,7 @@ Your code:   s.On("hello", func(ctx *Context) { ... })</pre>
     </ul>
   </div>
 
-  <h2>13. One sentence answers (interview style)</h2>
+  <h2>14. One sentence answers (interview style)</h2>
   <table>
     <thead><tr><th>Question</th><th>Answer</th></tr></thead>
     <tbody>
@@ -362,6 +375,7 @@ Your code:   s.On("hello", func(ctx *Context) { ... })</pre>
       <tr><td>Goroutines per user?</td><td>~2 (read + write pump) while connected.</td></tr>
       <tr><td>Can polling upgrade to WebSocket?</td><td>Yes (v0.4.0) — same <code>sid</code>, transport swap, pumps keep running.</td></tr>
       <tr><td>What survives a dropped connection?</td><td>With <code>SessionRecovery</code> on: the session, its room membership, and every event in the replay buffer (v0.5.0). Per process only.</td></tr>
+      <tr><td>Can the real <code>socket.io-client</code> connect?</td><td>Yes (v0.6.0): mount <code>SocketIOHandler()</code>; same handlers serve legacy and Socket.IO clients.</td></tr>
       <tr><td>Ready for multi-region out of the box?</td><td>No — you need sticky sessions + external pub/sub for that.</td></tr>
     </tbody>
   </table>

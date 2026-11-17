@@ -34,6 +34,7 @@ Transport (WebSocket or polling)         ← the actual byte pipe
 | `internal/engineio_handler.go`, `internal/poll_manager.go` | Engine.IO HTTP: polling handshake, long-poll GET, POST send, and WebSocket upgrade on existing sessions. |
 | `internal/session_transport.go`, `internal/eio_ws_transport.go` | Swappable transport wrapper and Engine.IO framing over WebSocket after upgrade. |
 | `internal/session.go` | Recovery sessions: seq counter, bounded replay buffer, idempotency window, park/resume/TTL store. Opt-in; see [RECOVERY.md](RECOVERY.md). |
+| `socketio.go`, `namespace.go`, `broadcast.go` | Socket.IO dialect (M5): second mount, per-namespace sockets, acks, broadcast algebra. See [SOCKETIO.md](SOCKETIO.md). |
 | `internal/hub.go`, `internal/client.go` | The connection hub (rooms, fan-out) and the per-connection read/write loops. The client talks to the socket **only** through `Transport`. |
 
 ## Why the Transport seam matters
@@ -58,6 +59,19 @@ buffer. On resume the hub moves room membership to the new client in one step
 state). Sequence assignment and queueing happen under one session lock, which is
 what makes seq order equal wire order. Replay and the `$session` frame travel in a
 pre-queue that `WritePump` drains before the live channel.
+
+## Why Socket.IO is a second mount (M5)
+
+`SocketIOHandler()` reuses the Engine.IO core and hub but attaches clients with
+`DialectSocketIO` instead of the legacy dialect. The hub stores one pre-encoded
+frame per dialect in an `EmitJob` (`Data` legacy, `SIOData` Socket.IO) and picks
+per recipient, so a broadcast is encoded once per dialect, not once per client.
+A Socket.IO connection multiplexes namespaces: `sioConn` owns the Engine.IO
+connection, one `ioSocket` per namespace owns its rooms and pending acks.
+Room keys are plain names for the default namespace (so legacy and Socket.IO
+clients share rooms) and NUL-prefixed keys for everything else; the prefix keeps
+namespace/socket-id bookkeeping out of listings and unreachable from user input.
+Until `SocketIOHandler()` is called no Socket.IO frame is ever built.
 
 ## Packet codecs in one line each
 

@@ -98,7 +98,7 @@ func (h *EngineIOHandler) serveWebSocketUpgrade(w http.ResponseWriter, r *http.R
 	}
 	sid := r.URL.Query().Get("sid")
 	if sid == "" {
-		http.Error(w, "sid required", http.StatusBadRequest)
+		h.serveDirectWebSocket(w, r)
 		return
 	}
 	if !h.manager.readyForUpgrade(sid) {
@@ -112,6 +112,29 @@ func (h *EngineIOHandler) serveWebSocketUpgrade(w http.ResponseWriter, r *http.R
 	if _, ok := h.manager.applyUpgrade(sid, raw); !ok {
 		_ = raw.Close()
 	}
+}
+
+// serveDirectWebSocket handles clients that skip polling (transport=websocket with no
+// sid, e.g. socket.io-client with transports:["websocket"]). Engine.IO v4 requires the
+// server to send the open packet as the first frame; there is no upgrade to offer.
+func (h *EngineIOHandler) serveDirectWebSocket(w http.ResponseWriter, r *http.Request) {
+	raw, err := h.wsUp.Upgrade(w, r)
+	if err != nil {
+		return
+	}
+	cfg := h.manager.cfg
+	hs := engineio.NewHandshake(randomPollSID(), cfg.PingInterval, cfg.PingTimeout, cfg.MaxPayload)
+	hs.Upgrades = []string{}
+	open, err := engineio.MarshalOpenPacket(hs)
+	if err == nil {
+		_ = raw.SetWriteDeadline(time.Now().Add(10 * time.Second))
+		err = raw.Write(open)
+	}
+	if err != nil || h.attach == nil {
+		_ = raw.Close()
+		return
+	}
+	h.attach(newEIOWebSocketTransport(raw), r)
 }
 
 func (h *EngineIOHandler) servePoll(w http.ResponseWriter, pt *pollingTransport) {

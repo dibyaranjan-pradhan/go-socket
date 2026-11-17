@@ -6,9 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 While the version is `0.x`, minor releases may include documented breaking changes.
 
-## [Unreleased](https://github.com/dibyaranjan-pradhan/go-socket/compare/v0.5.0...HEAD)
+## [Unreleased](https://github.com/dibyaranjan-pradhan/go-socket/compare/v0.6.0...HEAD)
 
 _Nothing yet._
+
+## [0.6.0](https://github.com/dibyaranjan-pradhan/go-socket/releases/tag/v0.6.0) - 2026-11-17
+
+M5 — Socket.IO semantics: namespaces, bidirectional acks, auth, broadcast algebra.
+
+### Added
+
+- **`Server.SocketIOHandler()`**: Socket.IO v5 over Engine.IO v4 (polling, WebSocket-only, and upgrade) for the official `socket.io-client`. Mount at `/socket.io/`. See [docs/SOCKETIO.md](docs/SOCKETIO.md).
+- **Namespaces**: `Server.Of(name)` returns a `Namespace` with its own `On`, `Use`, `OnConnect`, `OnDisconnect`. The default namespace `/` shares the server's own registrations, so existing handlers serve Socket.IO clients unchanged; server-wide `Use` middleware also guards every namespace.
+- **Auth + `CONNECT_ERROR`**: `Context.Auth()` / `BindAuth()` expose the CONNECT auth payload; `ConnectError{Message, Data}` controls what the client sees, any other error becomes a generic `rejected`.
+- **Acks both ways**: `Context.Ack(...)` (client → server) and `Context.EmitWithAck(event, data, timeout, cb)` (server → client) with `ErrAckTimeout` / `ErrAckDisconnected`, a per-socket cap (`SocketIOConfig.MaxPendingAcks`) and `WantsAck()`.
+- **Broadcast algebra**: `Namespace` and `Context` gain `To`, `In`, `Except`, `Broadcast`, `Emit`; chainable immutable `Broadcast` with `Emit`/`EmitWith`.
+- `Config.SocketIO` (`ConnectTimeout`, `AckTimeout`, `MaxPendingAcks`); `Context.Namespace()`, `SocketID()`, `Args()`.
+- `EngineIOHandler` accepts direct WebSocket connections (`transport=websocket` without `sid`), as `socket.io-client` with `transports:["websocket"]` sends.
+- [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md): legacy JSON ↔ Socket.IO mapping, support policy, migration order.
+
+### Changed
+
+- `Context.JoinRoom` / `LeaveRoom` and `EmitToRoom`-style calls ignore room names starting with NUL (`\x00`), which the library reserves for internal bookkeeping.
+- `ShutdownWithMessage` also reaches Socket.IO clients (as an event on `/`).
+
+### Notes
+
+- **No breaking changes.** Until `SocketIOHandler()` is called, behaviour and wire output are identical to 0.5.0; `Handler()` and `EngineIOHandler()` are untouched. Legacy clients stay supported (not removed before 1.0); legacy and Socket.IO clients share rooms of the default namespace.
+- Not in this release: binary events/acks (M6) and session recovery for Socket.IO clients (legacy only).
 
 ## [0.5.0](https://github.com/dibyaranjan-pradhan/go-socket/releases/tag/v0.5.0) - 2026-10-29
 

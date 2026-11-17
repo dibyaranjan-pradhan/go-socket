@@ -66,8 +66,9 @@ See `TestEngineIOPollingHandshakeAndEvent` in `engineio_test.go` (polling) and
 `TestEngineIOUpgradeEndToEnd` in `upgrade_test.go` (upgrade).
 
 ## Limitations
-- **Socket.IO packet types** are not on the wire yet; payloads use the existing
-  `{event, payload, ack}` JSON inside Engine.IO message packets.
+- **Socket.IO packets** are not spoken here: `EngineIOHandler()` carries the
+  legacy `{event, payload, ack}` JSON. Use `SocketIOHandler()` (v0.6.0) for
+  Socket.IO — see [SOCKETIO.md](SOCKETIO.md).
 - **Separate mount** — `EngineIOHandler()` does not replace `Handler()`; mount
   both if you need both transports.
 - **Native WebSocket** (`Config.NativeWebSocket`) is alpha; gorilla is default.
@@ -76,3 +77,4 @@ See `TestEngineIOPollingHandshakeAndEvent` in `engineio_test.go` (polling) and
 - [Upgrade guide](UPGRADE.md) — probe/upgrade sequence, native codec, Autobahn.
 - [Architecture](ARCHITECTURE.md) — how Engine.IO fits under your handlers.
 - [Wire protocol](WIRE_PROTOCOL.md) — JSON event shape (unchanged).
+- [Socket.IO](SOCKETIO.md) — namespaces, acks, auth on the same Engine.IO core.
