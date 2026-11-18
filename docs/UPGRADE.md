@@ -73,16 +73,23 @@ Run the native codec against the [Autobahn Testsuite](https://github.com/crossba
 make autobahn
 ```
 
-This starts the echo server in `tools/autobahn/echo` (native RFC 6455) and runs
-`wstest` in Docker. Reports land in `tools/autobahn/reports/`. Requires Docker.
+This starts the echo server in `tools/autobahn/echo` (native RFC 6455), runs
+`wstest` in Docker, and fails if any case is not `OK`, `NON-STRICT`, or
+`INFORMATIONAL` (`tools/autobahn/check`; `wstest` itself always exits 0).
+Reports land in `tools/autobahn/reports/`. Requires Docker. Sections 12 and 13
+(permessage-deflate) are excluded until compression lands in M7.
 
 Manual steps:
 
 ```bash
 go run ./tools/autobahn/echo -addr :9001
-docker run --rm -v "$(pwd)/tools/autobahn:/config" -v "$(pwd)/tools/autobahn/reports:/reports" \
+docker run --rm --add-host=host.docker.internal:host-gateway \
+  -v "$(pwd)/tools/autobahn:/config" -v "$(pwd)/tools/autobahn/reports:/reports" \
   crossbario/autobahn-testsuite wstest -m fuzzingclient -s /config/fuzzingclient.json
+go run ./tools/autobahn/check
 ```
+
+Codec fuzzing: `go test ./internal/nativews -run '^$' -fuzz FuzzReadMessage -fuzztime 1m`.
 
 ## Limitations (M3)
 

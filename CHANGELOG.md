@@ -8,7 +8,18 @@ While the version is `0.x`, minor releases may include documented breaking chang
 
 ## [Unreleased](https://github.com/dibyaranjan-pradhan/go-socket/compare/v0.6.0...HEAD)
 
-_Nothing yet._
+M6 (in progress) — public beta, native codec default, gorilla removal.
+
+### Fixed
+
+- Native WebSocket codec (`Config.NativeWebSocket`) now passes the Autobahn fuzzingclient suite (301 cases, 0 failures; previously 88 failures). It enforces RFC 6455 framing rules (reserved bits/opcodes, control-frame limits, masking), validates UTF-8 in text messages and close reasons, validates and echoes close codes, and answers violations with 1002/1007/1009.
+- Native codec: a forged frame length can no longer exhaust memory or crash the process. It is checked against the read limit without integer overflow, and payload memory grows only as bytes arrive. Read errors are now permanent, like gorilla's, so a retry after a timeout cannot misread a half-read frame. Pong/close replies no longer interleave with concurrent writes; frames are written with one buffered flush instead of two syscalls.
+- Native codec: non-WebSocket requests get an HTTP error (400/403/405, and `Sec-WebSocket-Version: 13` on a version mismatch) instead of an empty 200, matching gorilla. `Config.ReadBufferSize` now sizes its read buffer.
+- Flaky data races in the test suite; `go test -race ./...` is green.
+
+### Changed
+
+- `make autobahn` fails on any failing Autobahn case and runs on Linux Docker hosts.
 
 ## [0.6.0](https://github.com/dibyaranjan-pradhan/go-socket/releases/tag/v0.6.0) - 2026-11-17
 

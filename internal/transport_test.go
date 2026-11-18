@@ -165,23 +165,20 @@ func TestClientReadPumpHeartbeatTimeout(t *testing.T) {
 	pt := newPollingTransport(testSession())
 	defer pt.Close()
 
-	timeoutCalled := false
+	timedOut := make(chan struct{})
 	c := NewClient(hub, pt, ClientOptions{
 		ID:                 "hb",
 		PongWait:           5 * time.Millisecond,
-		OnHeartbeatTimeout: func() { timeoutCalled = true },
+		OnHeartbeatTimeout: func() { close(timedOut) },
 	})
 	hub.Register(c)
 	go c.ReadPump()
 
-	deadline := time.Now().Add(500 * time.Millisecond)
-	for time.Now().Before(deadline) {
-		if timeoutCalled {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
+	select {
+	case <-timedOut:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("OnHeartbeatTimeout not called")
 	}
-	t.Fatal("OnHeartbeatTimeout not called")
 }
 
 // TestClientReadPumpDeliversThroughTransport shows the inbound path: a frame

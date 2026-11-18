@@ -1,294 +1,395 @@
 // Copyright (c) 2026 Dibyaranjan Pradhan. All rights reserved.
 
-// Package nativews is go-socket's alpha server-side WebSocket codec (RFC 6455).
-// It exists so the library can drop gorilla/websocket once Autobahn coverage is green.
+// Package nativews is go-socket's RFC 6455 WebSocket codec, built on the standard
+// library only so the core module carries no third-party dependency. It negotiates
+// no extensions or subprotocols; permessage-deflate is planned for M7.
 package nativews
 
 import (
 	"bufio"
 	"crypto/rand"
-	"crypto/sha1"
-	"encoding/base64"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"net"
-	"net/http"
-	"strings"
+	"slices"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
+// Message and control opcodes (RFC 6455 §5.2).
 const (
-	opcodeContinuation = 0x0
-	opcodeText         = 0x1
-	opcodeBinary       = 0x2
-	opcodeClose        = 0x8
-	opcodePing         = 0x9
-	opcodePong         = 0xA
+	TextMessage   = 1
+	BinaryMessage = 2
+	CloseMessage  = 8
+	PingMessage   = 9
+	PongMessage   = 10
 
+	opContinuation    = 0
 	maxControlPayload = 125
+
+	// defaultReadLimit applies when SetReadLimit was never called, so a peer-declared
+	// frame length can never drive an unbounded allocation.
+	defaultReadLimit = 32 << 20
+	readChunk        = 64 << 10
 )
 
-var (
-	// ErrNotWebSocket is returned when the request is not a valid upgrade.
-	ErrNotWebSocket = errors.New("nativews: not a websocket handshake")
-	// ErrHandshakeComplete means Upgrade was already called on this connection.
-	ErrHandshakeComplete = errors.New("nativews: handshake already complete")
+// Close codes (RFC 6455 §7.4.1).
+const (
+	CloseNormalClosure    = 1000
+	CloseProtocolError    = 1002
+	CloseNoStatusReceived = 1005
+	CloseInvalidPayload   = 1007
+	CloseMessageTooBig    = 1009
 )
 
-// Conn is a server-side WebSocket after the HTTP upgrade handshake.
+// ErrCloseSent is returned by writes after a close frame went out; RFC 6455 forbids
+// sending anything else on the connection after that.
+var ErrCloseSent = errors.New("nativews: close frame already sent")
+
+// CloseError is returned by ReadMessage when the peer closes the connection.
+// Code is CloseNoStatusReceived when the close frame carried no status.
+type CloseError struct {
+	Code int
+	Text string
+}
+
+func (e *CloseError) Error() string {
+	return fmt.Sprintf("nativews: peer closed (%d) %s", e.Code, e.Text)
+}
+
+// protocolError is a peer violation; ReadMessage answers it with close code before returning it.
+type protocolError struct {
+	code   int
+	reason string
+}
+
+func (e *protocolError) Error() string { return "nativews: " + e.reason }
+
+// Conn is one WebSocket connection after the opening handshake. One goroutine may
+// read while others write: the reader answers pings and closes itself, so all
+// writes share writeMu to keep frames from interleaving.
 type Conn struct {
-	br          *bufio.Reader
-	w           io.Writer
-	closer      io.Closer
-	readLimit   int64
+	nc     net.Conn
+	br     *bufio.Reader
+	client bool // client conns mask outbound frames and require unmasked inbound ones
+
 	readMu      sync.Mutex
-	writeMu     sync.Mutex
+	readErr     error // sticky: a failed read may have consumed part of a frame
+	readLimit   int64
 	pongHandler func(string) error
+
+	writeMu   sync.Mutex
+	bw        *bufio.Writer
+	closeSent bool
 }
 
-// Upgrade hijacks w and completes the WebSocket opening handshake.
-func Upgrade(w http.ResponseWriter, r *http.Request, checkOrigin func(*http.Request) bool) (*Conn, error) {
-	if !headerTokenContains(r.Header, "Connection", "upgrade") ||
-		!strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
-		return nil, ErrNotWebSocket
-	}
-	if r.Method != http.MethodGet {
-		return nil, ErrNotWebSocket
-	}
-	if checkOrigin != nil && !checkOrigin(r) {
-		http.Error(w, "origin not allowed", http.StatusForbidden)
-		return nil, ErrNotWebSocket
-	}
-	key := r.Header.Get("Sec-WebSocket-Key")
-	if key == "" {
-		return nil, ErrNotWebSocket
-	}
-	if r.Header.Get("Sec-WebSocket-Version") != "13" {
-		http.Error(w, "unsupported websocket version", http.StatusBadRequest)
-		return nil, ErrNotWebSocket
-	}
-
-	hj, ok := w.(http.Hijacker)
-	if !ok {
-		return nil, errors.New("nativews: ResponseWriter does not support hijacking")
-	}
-	conn, bufrw, err := hj.Hijack()
-	if err != nil {
-		return nil, err
-	}
-	accept := computeAccept(key)
-	response := "HTTP/1.1 101 Switching Protocols\r\n" +
-		"Upgrade: websocket\r\n" +
-		"Connection: Upgrade\r\n" +
-		"Sec-WebSocket-Accept: " + accept + "\r\n\r\n"
-	if _, err := bufrw.WriteString(response); err != nil {
-		_ = conn.Close()
-		return nil, err
-	}
-	if err := bufrw.Flush(); err != nil {
-		_ = conn.Close()
-		return nil, err
-	}
-	return &Conn{br: bufrw.Reader, w: conn, closer: conn}, nil
+func newConn(nc net.Conn, br *bufio.Reader, bw *bufio.Writer, client bool) *Conn {
+	return &Conn{nc: nc, br: br, bw: bw, client: client}
 }
 
-func computeAccept(key string) string {
-	const magic = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
-	h := sha1.Sum([]byte(key + magic))
-	return base64.StdEncoding.EncodeToString(h[:])
-}
-
-func headerTokenContains(h http.Header, name, token string) bool {
-	for _, v := range h[name] {
-		for _, part := range strings.Split(v, ",") {
-			if strings.EqualFold(strings.TrimSpace(part), token) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// SetReadLimit caps the payload size of a single message after reassembly.
+// SetReadLimit caps the size of one reassembled message. A larger message closes
+// the connection with CloseMessageTooBig.
 func (c *Conn) SetReadLimit(limit int64) { c.readLimit = limit }
 
-// SetReadDeadline sets the read deadline on the underlying connection when supported.
-func (c *Conn) SetReadDeadline(t time.Time) error {
-	if nc, ok := c.closer.(net.Conn); ok {
-		return nc.SetReadDeadline(t)
-	}
-	return nil
-}
+// SetReadDeadline bounds the next read on the underlying connection.
+func (c *Conn) SetReadDeadline(t time.Time) error { return c.nc.SetReadDeadline(t) }
 
-// SetWriteDeadline sets the write deadline on the underlying connection when supported.
-func (c *Conn) SetWriteDeadline(t time.Time) error {
-	if nc, ok := c.closer.(net.Conn); ok {
-		return nc.SetWriteDeadline(t)
-	}
-	return nil
-}
+// SetWriteDeadline bounds the next write on the underlying connection.
+func (c *Conn) SetWriteDeadline(t time.Time) error { return c.nc.SetWriteDeadline(t) }
 
-// SetPongHandler registers a callback for incoming pong control frames.
+// SetPongHandler registers a callback for pong frames. A non-nil error from fn is
+// returned by ReadMessage.
 func (c *Conn) SetPongHandler(fn func(string) error) { c.pongHandler = fn }
 
-// ReadMessage reads one complete text or binary application message.
+// Close closes the underlying connection without a close handshake.
+func (c *Conn) Close() error { return c.nc.Close() }
+
+// ReadMessage returns the next complete text or binary message. Control frames are
+// handled inline; a peer close is answered and returned as *CloseError. Errors are
+// permanent, including deadline timeouts, because the stream position is unknown
+// afterwards (same contract as gorilla). Only one goroutine may read at a time.
 func (c *Conn) ReadMessage() (opcode int, payload []byte, err error) {
 	c.readMu.Lock()
 	defer c.readMu.Unlock()
+	if c.readErr != nil {
+		return 0, nil, c.readErr
+	}
+	opcode, payload, err = c.readMessage()
+	var pe *protocolError
+	if errors.As(err, &pe) {
+		_ = c.writeClose(pe.code)
+	}
+	c.readErr = err
+	return opcode, payload, err
+}
 
+func (c *Conn) readMessage() (int, []byte, error) {
+	limit := c.readLimit
+	if limit <= 0 {
+		limit = defaultReadLimit
+	}
 	var (
-		msgOpcode int
-		buf       []byte
+		op    int
+		buf   []byte
+		valid int // bytes of buf already verified as UTF-8
 	)
 	for {
-		fin, op, data, err := c.readFrame()
+		h, err := c.readHeader()
 		if err != nil {
 			return 0, nil, err
 		}
-		switch op {
-		case opcodePing:
-			if err := c.writeFrame(true, opcodePong, data); err != nil {
+		if h.opcode >= CloseMessage {
+			payload, err := c.readPayload(h, nil)
+			if err != nil {
+				return 0, nil, err
+			}
+			if err := c.handleControl(h.opcode, payload); err != nil {
 				return 0, nil, err
 			}
 			continue
-		case opcodePong:
-			if c.pongHandler != nil {
-				_ = c.pongHandler(string(data))
+		}
+		switch {
+		case h.opcode == opContinuation && op == 0:
+			return 0, nil, &protocolError{CloseProtocolError, "continuation frame without a message"}
+		case h.opcode != opContinuation && op != 0:
+			return 0, nil, &protocolError{CloseProtocolError, "new message inside a fragmented message"}
+		case h.opcode != opContinuation:
+			op = h.opcode
+		}
+		// Subtract instead of add: len(buf)+h.length overflows for a forged 63-bit length.
+		if h.length > limit-int64(len(buf)) {
+			return 0, nil, &protocolError{CloseMessageTooBig, "message exceeds read limit"}
+		}
+		if buf, err = c.readPayload(h, buf); err != nil {
+			return 0, nil, err
+		}
+		// Validating per fragment lets an invalid text message fail as soon as the
+		// bad bytes arrive instead of after the whole message (Autobahn 6.x "fail fast").
+		if op == TextMessage {
+			n, ok := utf8Prefix(buf[valid:])
+			valid += n
+			if !ok || h.fin && valid != len(buf) {
+				return 0, nil, &protocolError{CloseInvalidPayload, "invalid UTF-8 in text message"}
 			}
-			continue
-		case opcodeClose:
-			_ = c.writeFrame(true, opcodeClose, nil)
-			return 0, nil, io.EOF
 		}
-
-		if msgOpcode == 0 {
-			msgOpcode = op
-		} else if op != opcodeContinuation {
-			return 0, nil, fmt.Errorf("nativews: unexpected opcode %d during fragmentation", op)
-		}
-		buf = append(buf, data...)
-		if c.readLimit > 0 && int64(len(buf)) > c.readLimit {
-			return 0, nil, fmt.Errorf("nativews: message exceeds read limit")
-		}
-		if fin {
-			if msgOpcode != opcodeText && msgOpcode != opcodeBinary {
-				return 0, nil, fmt.Errorf("nativews: fragmented control frame")
-			}
-			return msgOpcode, buf, nil
+		if h.fin {
+			return op, buf, nil
 		}
 	}
 }
 
-// WriteMessage sends one text or binary message (single frame, FIN set).
-func (c *Conn) WriteMessage(opcode int, data []byte) error {
-	c.writeMu.Lock()
-	defer c.writeMu.Unlock()
-	return c.writeFrame(true, opcode, data)
+type frameHeader struct {
+	fin    bool
+	opcode int
+	length int64
+	masked bool
+	mask   [4]byte
 }
 
-// WriteControl sends a small control frame (ping/pong/close).
-func (c *Conn) WriteControl(opcode int, data []byte) error {
-	if len(data) > maxControlPayload {
-		return fmt.Errorf("nativews: control frame too large")
+func (c *Conn) readHeader() (frameHeader, error) {
+	var b [8]byte
+	if _, err := io.ReadFull(c.br, b[:2]); err != nil {
+		return frameHeader{}, err
 	}
-	c.writeMu.Lock()
-	defer c.writeMu.Unlock()
-	return c.writeFrame(true, opcode, data)
-}
-
-// Close closes the underlying connection.
-func (c *Conn) Close() error {
-	if c.closer == nil {
-		return nil
+	h := frameHeader{
+		fin:    b[0]&0x80 != 0,
+		opcode: int(b[0] & 0x0f),
+		length: int64(b[1] & 0x7f),
+		masked: b[1]&0x80 != 0,
 	}
-	return c.closer.Close()
-}
-
-func (c *Conn) readFrame() (fin bool, opcode int, payload []byte, err error) {
-	b1, err := c.br.ReadByte()
-	if err != nil {
-		return false, 0, nil, err
-	}
-	b2, err := c.br.ReadByte()
-	if err != nil {
-		return false, 0, nil, err
-	}
-	fin = b1&0x80 != 0
-	opcode = int(b1 & 0x0F)
-	masked := b2&0x80 != 0
-	length := int64(b2 & 0x7F)
-
-	switch length {
-	case 126:
-		var ext [2]byte
-		if _, err := io.ReadFull(c.br, ext[:]); err != nil {
-			return false, 0, nil, err
-		}
-		length = int64(ext[0])<<8 | int64(ext[1])
-	case 127:
-		var ext [8]byte
-		if _, err := io.ReadFull(c.br, ext[:]); err != nil {
-			return false, 0, nil, err
-		}
-		length = 0
-		for i := 0; i < 8; i++ {
-			length = length<<8 | int64(ext[i])
-		}
-	}
-
-	if !masked {
-		return false, 0, nil, fmt.Errorf("nativews: client frame must be masked")
-	}
-	var maskKey [4]byte
-	if _, err := io.ReadFull(c.br, maskKey[:]); err != nil {
-		return false, 0, nil, err
-	}
-	payload = make([]byte, length)
-	if _, err := io.ReadFull(c.br, payload); err != nil {
-		return false, 0, nil, err
-	}
-	for i := range payload {
-		payload[i] ^= maskKey[i%4]
-	}
-
-	return fin, opcode, payload, nil
-}
-
-func (c *Conn) writeFrame(fin bool, opcode int, payload []byte) error {
-	var header []byte
-	b0 := byte(opcode)
-	if fin {
-		b0 |= 0x80
-	}
-	header = append(header, b0)
-
-	n := len(payload)
 	switch {
-	case n <= 125:
-		header = append(header, byte(n))
-	case n <= 65535:
-		header = append(header, 126, byte(n>>8), byte(n))
-	default:
-		header = append(header, 127,
-			0, 0, 0, 0,
-			byte(n>>24), byte(n>>16), byte(n>>8), byte(n))
+	case b[0]&0x70 != 0:
+		return h, &protocolError{CloseProtocolError, "reserved bits set without a negotiated extension"}
+	case h.opcode > BinaryMessage && h.opcode < CloseMessage || h.opcode > PongMessage:
+		return h, &protocolError{CloseProtocolError, "reserved opcode"}
+	case h.opcode >= CloseMessage && (!h.fin || h.length > maxControlPayload):
+		return h, &protocolError{CloseProtocolError, "fragmented or oversized control frame"}
+	case h.masked == c.client:
+		return h, &protocolError{CloseProtocolError, "frame masking does not match the peer role"}
 	}
+	switch h.length {
+	case 126:
+		if _, err := io.ReadFull(c.br, b[:2]); err != nil {
+			return h, err
+		}
+		h.length = int64(binary.BigEndian.Uint16(b[:2]))
+	case 127:
+		if _, err := io.ReadFull(c.br, b[:]); err != nil {
+			return h, err
+		}
+		n := binary.BigEndian.Uint64(b[:])
+		if n>>63 != 0 {
+			return h, &protocolError{CloseProtocolError, "payload length has the most significant bit set"}
+		}
+		h.length = int64(n)
+	}
+	if h.masked {
+		if _, err := io.ReadFull(c.br, h.mask[:]); err != nil {
+			return h, err
+		}
+	}
+	return h, nil
+}
 
-	if _, err := c.w.Write(header); err != nil {
-		return err
+// readPayload appends the frame payload to dst, unmasked. Callers bound h.length
+// first. It grows dst as bytes arrive, so a peer that declares a large frame and
+// then stalls cannot pin memory it never sent.
+func (c *Conn) readPayload(h frameHeader, dst []byte) ([]byte, error) {
+	start := len(dst)
+	for remaining := int(h.length); remaining > 0; {
+		n := min(remaining, readChunk)
+		dst = slices.Grow(dst, n)
+		if _, err := io.ReadFull(c.br, dst[len(dst):len(dst)+n]); err != nil {
+			return nil, err
+		}
+		dst = dst[:len(dst)+n]
+		remaining -= n
 	}
-	if n > 0 {
-		_, err := c.w.Write(payload)
-		return err
+	if h.masked {
+		maskBytes(h.mask, dst[start:])
+	}
+	return dst, nil
+}
+
+func (c *Conn) handleControl(op int, payload []byte) error {
+	switch op {
+	case PingMessage:
+		if err := c.writeFrame(PongMessage, payload); err != nil && err != ErrCloseSent {
+			return err
+		}
+	case PongMessage:
+		if c.pongHandler != nil {
+			return c.pongHandler(string(payload))
+		}
+	default:
+		code, text, err := parseClose(payload)
+		if err != nil {
+			return err
+		}
+		_ = c.writeClose(code)
+		return &CloseError{Code: code, Text: text}
 	}
 	return nil
 }
 
-// GenerateKey produces a valid Sec-WebSocket-Key for tests.
-func GenerateKey() string {
-	var b [16]byte
-	_, _ = rand.Read(b[:])
-	return base64.StdEncoding.EncodeToString(b[:])
+func parseClose(p []byte) (int, string, error) {
+	switch {
+	case len(p) == 0:
+		return CloseNoStatusReceived, "", nil
+	case len(p) == 1:
+		return 0, "", &protocolError{CloseProtocolError, "truncated close status"}
+	}
+	code := int(binary.BigEndian.Uint16(p))
+	if !validCloseCode(code) {
+		return 0, "", &protocolError{CloseProtocolError, "invalid close status"}
+	}
+	if !utf8.Valid(p[2:]) {
+		return 0, "", &protocolError{CloseInvalidPayload, "invalid UTF-8 in close reason"}
+	}
+	return code, string(p[2:]), nil
+}
+
+// validCloseCode accepts the codes a peer may send: 1004-1006 and 1015 are reserved
+// for local reporting, and 1012-2999 are unassigned in RFC 6455.
+func validCloseCode(code int) bool {
+	return code >= 1000 && code <= 1003 || code >= 1007 && code <= 1011 || code >= 3000 && code <= 4999
+}
+
+// FormatCloseMessage builds a close frame payload.
+func FormatCloseMessage(code int, text string) []byte {
+	return append(binary.BigEndian.AppendUint16(nil, uint16(code)), text...)
+}
+
+func (c *Conn) writeClose(code int) error {
+	var p []byte
+	if code != CloseNoStatusReceived {
+		p = FormatCloseMessage(code, "")
+	}
+	return c.writeFrame(CloseMessage, p)
+}
+
+// WriteMessage sends one text or binary message as a single frame.
+func (c *Conn) WriteMessage(opcode int, data []byte) error {
+	if opcode != TextMessage && opcode != BinaryMessage {
+		return fmt.Errorf("nativews: opcode %d is not a data message", opcode)
+	}
+	return c.writeFrame(opcode, data)
+}
+
+// WriteControl sends a ping, pong or close frame of at most 125 bytes.
+func (c *Conn) WriteControl(opcode int, data []byte) error {
+	if opcode < CloseMessage || opcode > PongMessage || len(data) > maxControlPayload {
+		return fmt.Errorf("nativews: invalid control frame (opcode %d, %d bytes)", opcode, len(data))
+	}
+	return c.writeFrame(opcode, data)
+}
+
+func (c *Conn) writeFrame(op int, payload []byte) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	if c.closeSent {
+		return ErrCloseSent
+	}
+	if op == CloseMessage {
+		c.closeSent = true
+	}
+	var hdr [14]byte
+	hdr[0] = 0x80 | byte(op)
+	n, i := len(payload), 2
+	switch {
+	case n <= 125:
+		hdr[1] = byte(n)
+	case n <= 0xffff:
+		hdr[1] = 126
+		binary.BigEndian.PutUint16(hdr[2:], uint16(n))
+		i = 4
+	default:
+		hdr[1] = 127
+		binary.BigEndian.PutUint64(hdr[2:], uint64(n))
+		i = 10
+	}
+	if c.client {
+		hdr[1] |= 0x80
+		_, _ = rand.Read(hdr[i : i+4])
+		payload = slices.Clone(payload)
+		maskBytes([4]byte(hdr[i:i+4]), payload)
+		i += 4
+	}
+	if _, err := c.bw.Write(hdr[:i]); err != nil {
+		return err
+	}
+	if _, err := c.bw.Write(payload); err != nil {
+		return err
+	}
+	return c.bw.Flush()
+}
+
+func maskBytes(key [4]byte, b []byte) {
+	for i := range b {
+		b[i] ^= key[i&3]
+	}
+}
+
+// utf8Prefix validates p up to a trailing rune that later bytes could still
+// complete. It returns the length of the verified part.
+func utf8Prefix(p []byte) (int, bool) {
+	i := 0
+	for i < len(p) {
+		if p[i] < utf8.RuneSelf {
+			i++
+			continue
+		}
+		if !utf8.FullRune(p[i:]) {
+			return i, true
+		}
+		r, size := utf8.DecodeRune(p[i:])
+		if r == utf8.RuneError && size == 1 {
+			return i, false
+		}
+		i += size
+	}
+	return i, true
 }

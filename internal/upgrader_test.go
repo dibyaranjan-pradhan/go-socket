@@ -25,7 +25,7 @@ func TestNewTransportUpgraderSelectsBackend(t *testing.T) {
 }
 
 func TestNativeUpgraderRoundTrip(t *testing.T) {
-	up := NewNativeUpgrader(nil)
+	up := NewNativeUpgrader(0, nil)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tr, err := up.Upgrade(w, r)
 		if err != nil {
@@ -75,7 +75,7 @@ func TestNativeUpgraderRoundTrip(t *testing.T) {
 }
 
 func TestNativeTransportName(t *testing.T) {
-	up := NewNativeUpgrader(nil)
+	up := NewNativeUpgrader(0, nil)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tr, err := up.Upgrade(w, r)
 		if err != nil {
@@ -96,7 +96,7 @@ func TestNativeTransportName(t *testing.T) {
 }
 
 func TestNativeUpgraderRejectsOrigin(t *testing.T) {
-	up := NewNativeUpgrader(func(*http.Request) bool { return false })
+	up := NewNativeUpgrader(0, func(*http.Request) bool { return false })
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set("Connection", "Upgrade")
 	req.Header.Set("Upgrade", "websocket")

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -233,9 +234,9 @@ func TestRecoverCatchesEventPanic(t *testing.T) {
 func TestGetConnectionStatsAfterConnect(t *testing.T) {
 	s := New(Config{})
 	defer func() { _ = s.Shutdown(newTestContext()) }()
-	var clientID string
+	ids := make(chan string, 1)
 	s.OnConnect(func(ctx *Context) {
-		clientID = ctx.ClientID()
+		ids <- ctx.ClientID()
 	})
 
 	ts := httptest.NewServer(s.Handler())
@@ -247,14 +248,10 @@ func TestGetConnectionStatsAfterConnect(t *testing.T) {
 	}
 	defer conn.Close()
 
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if clientID != "" {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	if clientID == "" {
+	var clientID string
+	select {
+	case clientID = <-ids:
+	case <-time.After(2 * time.Second):
 		t.Fatal("expected client ID from OnConnect")
 	}
 
@@ -274,7 +271,7 @@ func TestGetConnectionStatsAfterConnect(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for time.Now().Before(deadline) {
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); {
 		st = s.GetConnectionStats(clientID)
 		if st != nil && st.MessagesReceived >= 1 {
 			return
@@ -299,14 +296,14 @@ func TestHeartbeatTimeoutCallback(t *testing.T) {
 }
 
 func TestHeartbeatTimeoutFires(t *testing.T) {
-	var sawClient string
+	var fired atomic.Bool
 	s := New(Config{
 		PingInterval: 20 * time.Millisecond,
 		PongWait:     40 * time.Millisecond,
 	})
 	defer func() { _ = s.Shutdown(newTestContext()) }()
 	s.OnHeartbeatTimeout(func(ctx *Context) {
-		sawClient = ctx.ClientID()
+		fired.Store(ctx.ClientID() != "")
 	})
 
 	ts := httptest.NewServer(s.Handler())
@@ -321,7 +318,7 @@ func TestHeartbeatTimeoutFires(t *testing.T) {
 
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if sawClient != "" {
+		if fired.Load() {
 			return
 		}
 		time.Sleep(15 * time.Millisecond)
@@ -461,10 +458,10 @@ func TestLoggerMiddleware(t *testing.T) {
 }
 
 func TestOnDisconnectHandlerRuns(t *testing.T) {
-	called := false
+	var called atomic.Bool
 	s := New(Config{})
 	s.OnDisconnect(func(ctx *Context) {
-		called = true
+		called.Store(true)
 	})
 	ts := httptest.NewServer(s.Handler())
 	defer ts.Close()
@@ -479,7 +476,7 @@ func TestOnDisconnectHandlerRuns(t *testing.T) {
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if called {
+		if called.Load() {
 			return
 		}
 		time.Sleep(20 * time.Millisecond)

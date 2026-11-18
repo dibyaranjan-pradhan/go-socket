@@ -16,7 +16,7 @@ type WebSocketBackend int
 const (
 	// WebSocketBackendGorilla uses gorilla/websocket (default, production path).
 	WebSocketBackendGorilla WebSocketBackend = iota
-	// WebSocketBackendNative uses the in-tree RFC 6455 codec (alpha).
+	// WebSocketBackendNative uses the in-tree RFC 6455 codec.
 	WebSocketBackendNative
 )
 
@@ -28,25 +28,23 @@ type TransportUpgrader interface {
 // NewTransportUpgrader picks gorilla or native based on backend.
 func NewTransportUpgrader(backend WebSocketBackend, readBufferSize, writeBufferSize int, checkOrigin func(*http.Request) bool) TransportUpgrader {
 	if backend == WebSocketBackendNative {
-		return NewNativeUpgrader(checkOrigin)
+		return NewNativeUpgrader(readBufferSize, checkOrigin)
 	}
 	return NewWSUpgrader(readBufferSize, writeBufferSize, checkOrigin)
 }
 
 type nativeUpgrader struct {
-	checkOrigin func(*http.Request) bool
+	up nativews.Upgrader
 }
 
-// NewNativeUpgrader builds an upgrader backed by the alpha RFC 6455 codec.
-func NewNativeUpgrader(checkOrigin func(*http.Request) bool) TransportUpgrader {
-	if checkOrigin == nil {
-		checkOrigin = func(*http.Request) bool { return true }
-	}
-	return &nativeUpgrader{checkOrigin: checkOrigin}
+// NewNativeUpgrader builds an upgrader backed by the in-tree RFC 6455 codec. A nil
+// checkOrigin allows connections from any origin.
+func NewNativeUpgrader(readBufferSize int, checkOrigin func(*http.Request) bool) TransportUpgrader {
+	return &nativeUpgrader{up: nativews.Upgrader{ReadBufferSize: readBufferSize, CheckOrigin: checkOrigin}}
 }
 
 func (u *nativeUpgrader) Upgrade(w http.ResponseWriter, r *http.Request) (Transport, error) {
-	conn, err := nativews.Upgrade(w, r, u.checkOrigin)
+	conn, err := u.up.Upgrade(w, r)
 	if err != nil {
 		return nil, err
 	}
@@ -79,15 +77,15 @@ func (t *nativeTransport) Read() ([]byte, error) {
 }
 
 func (t *nativeTransport) Write(data []byte) error {
-	return t.conn.WriteMessage(0x1, data)
+	return t.conn.WriteMessage(nativews.TextMessage, data)
 }
 
 func (t *nativeTransport) Ping() error {
-	return t.conn.WriteControl(0x9, nil)
+	return t.conn.WriteControl(nativews.PingMessage, nil)
 }
 
 func (t *nativeTransport) SendClose() error {
-	return t.conn.WriteControl(0x8, []byte{0x03, 0xe8})
+	return t.conn.WriteControl(nativews.CloseMessage, nativews.FormatCloseMessage(nativews.CloseNormalClosure, ""))
 }
 
 func (t *nativeTransport) Close() error { return t.conn.Close() }

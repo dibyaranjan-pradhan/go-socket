@@ -30,7 +30,7 @@ Transport (WebSocket or polling)         ← the actual byte pipe
 | `internal/engineio` | The Engine.IO packet: a type (open, close, ping, pong, message, upgrade, noop) plus a payload, and the code to turn it into bytes and back. |
 | `internal/socketio` | The Socket.IO packet: a type (connect, event, ack, ...), a namespace, an optional ack id, and a JSON payload, plus its bytes-and-back code. |
 | `internal/transport.go`, `internal/upgrader.go` | The `Transport` interface and `TransportUpgrader` — gorilla (`wsTransport`) or native (`nativeTransport` + `internal/nativews`). |
-| `internal/nativews` | Alpha server-side WebSocket codec (RFC 6455) for Autobahn and future gorilla removal. |
+| `internal/nativews` | Standard-library RFC 6455 codec (server `Upgrader`, test/tool `Dial`); passes the Autobahn fuzzingclient suite. Becomes the only backend when gorilla is removed in M6. |
 | `internal/engineio_handler.go`, `internal/poll_manager.go` | Engine.IO HTTP: polling handshake, long-poll GET, POST send, and WebSocket upgrade on existing sessions. |
 | `internal/session_transport.go`, `internal/eio_ws_transport.go` | Swappable transport wrapper and Engine.IO framing over WebSocket after upgrade. |
 | `internal/session.go` | Recovery sessions: seq counter, bounded replay buffer, idempotency window, park/resume/TTL store. Opt-in; see [RECOVERY.md](RECOVERY.md). |

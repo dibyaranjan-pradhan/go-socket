@@ -16,8 +16,9 @@ func main() {
 	addr := flag.String("addr", ":9001", "listen address")
 	flag.Parse()
 
+	var up nativews.Upgrader
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		c, err := nativews.Upgrade(w, r, nil)
+		c, err := up.Upgrade(w, r)
 		if err != nil {
 			return
 		}

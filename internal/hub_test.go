@@ -4,6 +4,7 @@ package internal
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -150,8 +151,8 @@ func TestHubUnregisterRemovesFromRooms(t *testing.T) {
 }
 
 func TestHubLogEmitQueueFull(t *testing.T) {
-	var logged bool
-	h := NewHub(PrintfLoggerFunc(func(string, ...interface{}) { logged = true }), 8)
+	var logged atomic.Bool
+	h := NewHub(PrintfLoggerFunc(func(string, ...interface{}) { logged.Store(true) }), 8)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go h.Run(ctx)
@@ -166,7 +167,7 @@ func TestHubLogEmitQueueFull(t *testing.T) {
 	c.TrySend([]byte("fill"))
 	h.Emit(EmitJob{Room: "r", Data: []byte("overflow")})
 	time.Sleep(30 * time.Millisecond)
-	if !logged {
+	if !logged.Load() {
 		t.Fatal("expected log on full queue")
 	}
 }

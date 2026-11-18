@@ -53,7 +53,7 @@ help:
 	@echo ""
 	@echo "Autobahn (native RFC 6455, requires Docker):"
 	@echo "  make autobahn-echo    run echo server on :$(AUTOBAHN_PORT)"
-	@echo "  make autobahn         echo + Autobahn wstest → $(AUTOBAHN_REPORT)/"
+	@echo "  make autobahn         echo + Autobahn wstest → $(AUTOBAHN_REPORT)/, fails on any failing case"
 	@echo ""
 	@echo "Aggregates:"
 	@echo "  make check            fmt vet errcheck staticcheck vulncheck"
@@ -132,20 +132,22 @@ staticcheck:
 autobahn-echo:
 	$(GO) run ./tools/autobahn/echo -addr :$(AUTOBAHN_PORT)
 
-## autobahn: start echo server and run Autobahn Testsuite via Docker
+## autobahn: run Autobahn Testsuite against the echo server via Docker; fails on any failing case
+# --add-host makes host.docker.internal resolve on Linux runners too. The echo
+# binary is built first so `kill` reaches the server, not a `go run` wrapper.
 autobahn:
 	@mkdir -p $(AUTOBAHN_REPORT)
-	@echo "Starting echo on :$(AUTOBAHN_PORT)..."
-	@$(GO) run ./tools/autobahn/echo -addr :$(AUTOBAHN_PORT) & \
+	@$(GO) build -o $(AUTOBAHN_REPORT)/echo ./tools/autobahn/echo
+	@$(AUTOBAHN_REPORT)/echo -addr :$(AUTOBAHN_PORT) & \
 	ECHO_PID=$$!; \
 	trap 'kill $$ECHO_PID 2>/dev/null' EXIT; \
-	sleep 2; \
-	docker run --rm \
+	sleep 1; \
+	docker run --rm --add-host=host.docker.internal:host-gateway \
 	  -v "$$(pwd)/tools/autobahn:/config" \
 	  -v "$$(pwd)/$(AUTOBAHN_REPORT):/reports" \
 	  crossbario/autobahn-testsuite \
-	  wstest -m fuzzingclient -s /config/fuzzingclient.json; \
-	STATUS=$$?; kill $$ECHO_PID 2>/dev/null; exit $$STATUS
+	  wstest -m fuzzingclient -s /config/fuzzingclient.json && \
+	$(GO) run ./tools/autobahn/check -report $(AUTOBAHN_REPORT)/index.json
 
 ## clean: remove generated coverage artifacts
 clean:

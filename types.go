@@ -70,8 +70,8 @@ type Config struct {
 	CheckOrigin func(r *http.Request) bool
 	// Logger receives diagnostic lines. If nil, the standard library log package is used.
 	Logger Logger
-	// NativeWebSocket enables the in-tree RFC 6455 WebSocket codec (alpha) instead of
-	// gorilla/websocket. Gorilla remains the default production path.
+	// NativeWebSocket enables the in-tree RFC 6455 WebSocket codec instead of
+	// gorilla/websocket. Gorilla remains the default until it is removed in v0.7.0.
 	NativeWebSocket bool
 	// SessionRecovery opts in to sequence numbers, replay on reconnect, and
 	// idempotent inbound delivery. See SessionRecoveryConfig.

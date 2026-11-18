@@ -14,9 +14,9 @@ import (
 )
 
 func TestPollHandlerHandshake(t *testing.T) {
-	var attached bool
+	attached := make(chan struct{})
 	h := NewPollHandler(time.Second, 2*time.Second, 1<<20, func(Transport, *http.Request) {
-		attached = true
+		close(attached)
 	}, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/?EIO=4&transport=polling", nil)
@@ -29,8 +29,9 @@ func TestPollHandlerHandshake(t *testing.T) {
 	if !strings.HasPrefix(rec.Body.String(), "0") {
 		t.Fatalf("body = %q", rec.Body.String())
 	}
-	time.Sleep(20 * time.Millisecond)
-	if !attached {
+	select {
+	case <-attached:
+	case <-time.After(time.Second):
 		t.Fatal("attach callback not invoked")
 	}
 	if h.SessionCount() != 1 {
